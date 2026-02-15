@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-temporaryban",
   "version": "1.0.0",
-  "description": "OneBot违禁词检测禁言插件",
+  "description": "Koishi 违禁词检测与禁言插件，支持本地词库与在线API检测，违规邮件通知。",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -17,9 +17,10 @@
     "koishi",
     "plugin",
     "ban",
-    "temporaryban",
-    "onebot",
-    "qq"
+    "censorship",
+    "filter",
+    "email",
+    "notification"
   ],
   "peerDependencies": {
     "koishi": "^4.18.0"
@@ -28,5 +29,19 @@
     "@types/node": "^20.0.0",
     "koishi": "^4.18.0",
     "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@types/nodemailer": "^7.0.9",
+    "nodemailer": "^8.0.1"
+  },
+  "koishi": {
+    "description": {
+      "en": "Forbidden words detection and temporary ban plugin for Koishi, supporting local dictionary and online API, with email notifications.",
+      "zh": "Koishi 违禁词检测与禁言插件，支持本地词库与在线API检测，违规邮件通知。"
+    },
+    "service": {
+      "required": [],
+      "optional": []
+    }
   }
 }

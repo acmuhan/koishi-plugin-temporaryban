@@ -1,0 +1,5 @@
+src/
+koishi-to-demo/
+node_modules/
+.gitignore
+tsconfig.json

@@ -1,10 +1,11 @@
-import { Context, Schema, Session, Time, Logger } from 'koishi'
+import { Context, Schema, Session, Time, Logger, h } from 'koishi'
 import { randomUUID } from 'crypto'
+import * as nodemailer from 'nodemailer'
 
-export const name = 'koishi-plugin-qq-jinyan-xiaoyu'
+export const name = 'koishi-plugin-temporaryban'
 
-// Logger definition
-const logger = new Logger('qq-jinyan-xiaoyu')
+// --- Logger ---
+const logger = new Logger('temporaryban')
 
 // --- Configuration Interfaces ---
 
@@ -14,59 +15,97 @@ export interface BadWordItem {
 }
 
 export interface WhitelistItem {
-  qq: string
+  userId: string
+}
+
+export interface SmtpConfig {
+  host: string
+  port: number
+  secure: boolean
+  user: string
+  pass: string
+  senderName: string
+  senderEmail: string
+  receivers: string[]
+}
+
+export interface ApiConfig {
+  apiUrl: string
+  apiId: string
+  apiKey: string
 }
 
 export interface GroupConfig {
   id: string
   groupId: string
-  badWordDict: string
+  enable: boolean
+  detectionMethod: 'local' | 'api'
+  
+  // Local Dictionary
+  localBadWordDict: string
+  
+  // Violation Settings
   whitelist: WhitelistItem[]
-  triggerTimes: number
-  triggerMinutes: number
+  triggerThreshold: number
+  triggerWindowMinutes: number
   muteMinutes: number
 }
 
 export interface Config {
+  // Global Settings
+  smtp: SmtpConfig
+  api: ApiConfig
+  
+  // Group Settings
   groups: GroupConfig[]
 }
 
 // --- Schema Definition ---
 
 export const Config: Schema<Config> = Schema.object({
+  smtp: Schema.object({
+    host: Schema.string().description('SMTP Host').default('smtp.example.com'),
+    port: Schema.number().description('SMTP Port').default(465),
+    secure: Schema.boolean().description('Use SSL/TLS').default(true),
+    user: Schema.string().description('SMTP User').default('user@example.com'),
+    pass: Schema.string().role('secret').description('SMTP Password').default('password'),
+    senderName: Schema.string().description('Sender Name').default('Koishi Bot'),
+    senderEmail: Schema.string().description('Sender Email').default('bot@example.com'),
+    receivers: Schema.array(String).description('Receiver Emails').role('table'),
+  }).description('Email Notification Settings (SMTP)'),
+
+  api: Schema.object({
+    apiUrl: Schema.string().description('API URL').default('https://cn.apihz.cn/api/zici/mgc.php'),
+    apiId: Schema.string().description('Developer ID').default(''),
+    apiKey: Schema.string().role('secret').description('API Key').default(''),
+  }).description('API Detection Settings (ApiHz)'),
+
   groups: Schema.array(
     Schema.object({
-      id: Schema.string().hidden().default(() => randomUUID()),
-      groupId: Schema.string()
-        .description('监管群号（第三方机器人群号，仅填数字）')
-        .required(),
-      badWordDict: Schema.string()
-        .description('违禁词字典（严格格式：(1.违禁词1)(2.违禁词2)）')
+      id: Schema.string().hidden().default(''),
+      groupId: Schema.string().description('Group ID').required(),
+      enable: Schema.boolean().description('Enable Monitoring').default(true),
+      detectionMethod: Schema.union([
+        Schema.const('local').description('Local Dictionary'),
+        Schema.const('api').description('Online API (ApiHz)'),
+      ]).description('Detection Method').default('local'),
+      
+      localBadWordDict: Schema.string()
+        .description('Local Dictionary (Format: (1.word1)(2.word2))')
         .default(''),
+        
       whitelist: Schema.array(
         Schema.object({
-          qq: Schema.string().description('白名单用户ID')
+          userId: Schema.string().description('User ID')
         })
-      )
-        .description('本群白名单用户（跳过所有检测）')
-        .role('table'),
-      triggerTimes: Schema.number()
-        .description('累计违禁触发禁言次数（最小值1）')
-        .default(3)
-        .min(1),
-      triggerMinutes: Schema.number()
-        .description('违禁统计时间窗口（分钟）')
-        .default(5)
-        .min(0.1),
-      muteMinutes: Schema.number()
-        .description('禁言时长（分钟）')
-        .default(10)
-        .min(0.1),
-    }).description('单群监管配置项')
-  ).description('监管群列表')
-    .default([])
-    .role('list')
-}).description('QQ禁言小语 - 插件配置')
+      ).description('Whitelist Users').role('table'),
+      
+      triggerThreshold: Schema.number().description('Trigger Threshold (Count)').default(3).min(1),
+      triggerWindowMinutes: Schema.number().description('Trigger Window (Minutes)').default(5).min(0.1),
+      muteMinutes: Schema.number().description('Mute Duration (Minutes)').default(10).min(0.1),
+    }).description('Group Configuration')
+  ).description('Monitored Groups').role('list').default([])
+}).description('Temporary Ban Plugin Configuration')
 
 // --- Runtime State Interfaces ---
 
@@ -75,23 +114,24 @@ interface UserRecord {
   firstTime: number
 }
 
+interface CheckResult {
+  detected: boolean
+  censoredText?: string
+  detectedWords?: string[]
+}
+
 // --- Plugin Implementation ---
 
 export function apply(ctx: Context, config: Config) {
-  // Runtime state storage
-  // Key: groupId, Value: Parsed BadWordItems
-  const parsedBadWordsCache = new Map<string, BadWordItem[]>()
-  
-  // Key: groupId-userId, Value: UserRecord
-  const userRecords = new Map<string, UserRecord>()
-  
-  // Key: groupId-userId, Value: last message timestamp
+  // Runtime state
+  const parsedLocalDictCache = new Map<string, BadWordItem[]>()
+  const userRecords = new Map<string, UserRecord>() // Key: groupId-userId
   const messageThrottle = new Map<string, number>()
-  
-  const THROTTLE_LIMIT = 100 // 100ms throttle
+  const THROTTLE_LIMIT = 500 // 500ms throttle
 
-  // Helper to parse bad words
-  function parseBadWordDict(dictStr: string): BadWordItem[] {
+  // --- Helper Functions ---
+
+  function parseLocalDict(dictStr: string): BadWordItem[] {
     const result: BadWordItem[] = []
     if (!dictStr || !dictStr.trim()) return result
     const reg = /\(([^.]+)\.(.+?)\)/g
@@ -102,47 +142,149 @@ export function apply(ctx: Context, config: Config) {
     return result
   }
 
-  // Initialize cache
   function initCache() {
-    parsedBadWordsCache.clear()
+    parsedLocalDictCache.clear()
     for (const group of config.groups) {
       if (!group.groupId) continue
-      const parsed = parseBadWordDict(group.badWordDict)
-      parsedBadWordsCache.set(group.groupId, parsed)
-      
-      if (parsed.length === 0 && group.badWordDict.trim()) {
-        logger.warn(`Group ${group.groupId} bad word dictionary format error.`)
-      }
+      const parsed = parseLocalDict(group.localBadWordDict)
+      parsedLocalDictCache.set(group.groupId, parsed)
     }
   }
 
-  // Initialize on startup and config change
+  // API Detection
+  async function checkWithApi(content: string): Promise<CheckResult> {
+    if (!config.api.apiId || !config.api.apiKey) {
+      logger.warn('API ID or Key is missing. Skipping API detection.')
+      return { detected: false }
+    }
+
+    try {
+      // Using POST as recommended
+      const response = await ctx.http.post(config.api.apiUrl, {
+        id: config.api.apiId,
+        key: config.api.apiKey,
+        words: content,
+        replacetype: 1, // Return replaced text
+        mgctype: 1,     // Return detected words list
+      }, {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      })
+
+      // API returns JSON
+      // Success: { code: 200, jcstatus: 1, replacewords: "...", mgcwords: "..." }
+      // No violation: { code: 200, jcstatus: 0, ... }
+      
+      if (response && response.code === 200) {
+        if (response.jcstatus === 1) {
+          const words = response.mgcwords ? response.mgcwords.split(',') : []
+          return {
+            detected: true,
+            censoredText: response.replacewords,
+            detectedWords: words
+          }
+        }
+        return { detected: false }
+      } else {
+        logger.warn(`API Error: ${JSON.stringify(response)}`)
+        return { detected: false }
+      }
+    } catch (err) {
+      logger.error(`API Request Failed: ${err}`)
+      return { detected: false }
+    }
+  }
+
+  // Local Detection
+  function checkWithLocal(content: string, groupId: string): CheckResult {
+    const badWords = parsedLocalDictCache.get(groupId) || []
+    if (badWords.length === 0) return { detected: false }
+
+    const detectedWords: string[] = []
+    let censoredText = content
+    let hasViolation = false
+
+    for (const item of badWords) {
+      if (content.includes(item.word)) {
+        hasViolation = true
+        detectedWords.push(item.word)
+        // Simple replacement for local
+        censoredText = censoredText.split(item.word).join('*'.repeat(item.word.length))
+      }
+    }
+
+    if (hasViolation) {
+      return {
+        detected: true,
+        censoredText,
+        detectedWords
+      }
+    }
+    return { detected: false }
+  }
+
+  // Email Notification
+  async function sendEmail(userId: string, groupId: string, words: string[]) {
+    if (!config.smtp.host || config.smtp.receivers.length === 0) return
+
+    const transporter = nodemailer.createTransport({
+      host: config.smtp.host,
+      port: config.smtp.port,
+      secure: config.smtp.secure, // true for 465, false for other ports
+      auth: {
+        user: config.smtp.user,
+        pass: config.smtp.pass,
+      },
+    })
+
+    const mailOptions = {
+      from: `"${config.smtp.senderName}" <${config.smtp.senderEmail}>`,
+      to: config.smtp.receivers.join(','),
+      subject: `[Koishi Security] Violation Detected in Group ${groupId}`,
+      text: `User ${userId} triggered forbidden words in Group ${groupId}.\n\nDetected Words: ${words.join(', ')}\n\nTime: ${new Date().toLocaleString()}`,
+      html: `
+        <h2>Violation Detected</h2>
+        <p><strong>Group ID:</strong> ${groupId}</p>
+        <p><strong>User ID:</strong> ${userId}</p>
+        <p><strong>Time:</strong> ${new Date().toLocaleString()}</p>
+        <p><strong>Detected Words:</strong></p>
+        <ul>
+          ${words.map(w => `<li>${w}</li>`).join('')}
+        </ul>
+      `,
+    }
+
+    try {
+      const info = await transporter.sendMail(mailOptions)
+      logger.info(`Email sent: ${info.messageId}`)
+    } catch (err) {
+      logger.error(`Failed to send email: ${err}`)
+    }
+  }
+
+  // --- Lifecycle ---
+
   ctx.on('ready', () => {
     initCache()
     logger.info('Plugin initialized.')
-    logger.info(`Monitored groups: ${config.groups.map(g => g.groupId).join(', ') || 'None'}`)
   })
-  
-  // Clean up throttle and user records periodically
+
   ctx.setInterval(() => {
-    const now = Date.now()
     messageThrottle.clear()
-    
-    // Optional: Clean up old user records to save memory
-    // Iterate and remove records older than max trigger window?
-    // For simplicity, we just keep them until restart or they expire naturally in logic
   }, 60 * 1000)
 
+  // --- Message Handler ---
+
   ctx.on('message', async (session: Session) => {
-    // Basic filtering
+    // Basic Filtering
     if (
       session.type !== 'group' ||
       !session.content ||
       session.selfId === session.userId ||
-      !session.guildId // standardized field for group ID
+      !session.guildId
     ) return
 
-    // Ensure it's a text message (roughly)
     const elements = session.elements || []
     if (!elements.some((el: any) => el.type === 'text')) return
 
@@ -150,14 +292,13 @@ export function apply(ctx: Context, config: Config) {
     const userId = session.userId
     const messageId = session.messageId
 
-    // Ensure required fields are present
     if (!userId) return
 
-    // Find config for this group
+    // Config Check
     const groupConfig = config.groups.find(g => g.groupId === groupId)
-    if (!groupConfig) return // Not monitored
+    if (!groupConfig || !groupConfig.enable) return
 
-    // Throttle check
+    // Throttle
     const throttleKey = `${groupId}-${userId}`
     const now = Date.now()
     if (messageThrottle.has(throttleKey) && now - messageThrottle.get(throttleKey)! < THROTTLE_LIMIT) {
@@ -165,23 +306,23 @@ export function apply(ctx: Context, config: Config) {
     }
     messageThrottle.set(throttleKey, now)
 
-    // Whitelist check
-    if (groupConfig.whitelist.some(w => w.qq === userId)) {
-      logger.debug(`User ${userId} in group ${groupId} is whitelisted.`)
-      return
+    // Whitelist
+    if (groupConfig.whitelist.some(w => w.userId === userId)) return
+
+    // Detection
+    let result: CheckResult = { detected: false }
+
+    if (groupConfig.detectionMethod === 'api') {
+      result = await checkWithApi(session.content!)
+    } else {
+      result = checkWithLocal(session.content!, groupId)
     }
 
-    // Bad word check
-    const badWords = parsedBadWordsCache.get(groupId) || []
-    if (badWords.length === 0) return
+    if (!result.detected) return
 
-    // session.content is guaranteed not null here due to early return
-    const content = session.content!
-    const matchItem = badWords.find(item => content.includes(item.word))
-    if (!matchItem) return
-
-    // --- Violation Detected ---
-    logger.warn(`Violation: Group ${groupId} User ${userId} used "${matchItem.word}"`)
+    // --- Violation Handling ---
+    const words = result.detectedWords || []
+    logger.warn(`Violation: Group ${groupId} User ${userId} Words: ${words.join(', ')}`)
 
     // 1. Recall Message
     if (messageId) {
@@ -189,33 +330,40 @@ export function apply(ctx: Context, config: Config) {
         if (session.bot.deleteMessage) {
           await session.bot.deleteMessage(groupId, messageId)
         } else {
-          // Fallback for non-standard adapters (like OneBot legacy)
+          // Fallback
           const bot = session.bot as any
           if (bot.delete_msg) {
             await bot.delete_msg({ group_id: groupId, message_id: messageId })
-          } else {
-            logger.warn('No delete message method available.')
           }
         }
-        logger.info(`Recalled message ${messageId}`)
       } catch (err) {
-        logger.error(`Failed to recall message: ${err}`)
+        logger.error(`Recall failed: ${err}`)
       }
-    } else {
-      logger.warn('Message ID missing, cannot recall.')
     }
 
-    // 2. Track Violation Count
+    // 2. Send Censored Text
+    if (result.censoredText) {
+      try {
+        await session.send(h.at(userId) + ' ' + result.censoredText)
+      } catch (err) {
+        logger.error(`Send message failed: ${err}`)
+      }
+    }
+
+    // 3. Email Notification
+    // Trigger on every violation
+    await sendEmail(userId, groupId, words)
+
+    // 4. Track & Punish
     const recordKey = `${groupId}-${userId}`
     let record = userRecords.get(recordKey)
-    const triggerWindow = groupConfig.triggerMinutes * Time.minute
+    const triggerWindow = groupConfig.triggerWindowMinutes * Time.minute
 
     if (!record) {
       record = { count: 1, firstTime: now }
       userRecords.set(recordKey, record)
     } else {
       if (now - record.firstTime > triggerWindow) {
-        // Window expired, reset
         record.count = 1
         record.firstTime = now
       } else {
@@ -223,30 +371,23 @@ export function apply(ctx: Context, config: Config) {
       }
     }
 
-    logger.info(`Violation count for ${userId}: ${record.count}/${groupConfig.triggerTimes}`)
+    logger.info(`Violation Count: ${record.count}/${groupConfig.triggerThreshold}`)
 
-    // 3. Mute if threshold reached
-    if (record.count >= groupConfig.triggerTimes) {
-      const muteDurationSeconds = Math.floor(groupConfig.muteMinutes * 60)
+    if (record.count >= groupConfig.triggerThreshold) {
+      const muteSeconds = Math.floor(groupConfig.muteMinutes * 60)
       try {
         if (session.bot.muteGuildMember) {
-           // Standard API: guildId, userId, duration (milliseconds)
-           await session.bot.muteGuildMember(groupId, userId, muteDurationSeconds * 1000)
+           await session.bot.muteGuildMember(groupId, userId, muteSeconds * 1000)
         } else {
-           // Fallback
            const bot = session.bot as any
            if (bot.set_group_ban) {
-             await bot.set_group_ban(groupId, userId, muteDurationSeconds)
-           } else {
-             logger.warn('No mute member method available.')
+             await bot.set_group_ban(groupId, userId, muteSeconds)
            }
         }
-        
-        logger.success(`Muted user ${userId} for ${groupConfig.muteMinutes} minutes.`)
-        // Reset record after punishment
+        logger.success(`Muted user ${userId}`)
         userRecords.delete(recordKey)
       } catch (err) {
-        logger.error(`Failed to mute user: ${err}`)
+        logger.error(`Mute failed: ${err}`)
       }
     }
   })
