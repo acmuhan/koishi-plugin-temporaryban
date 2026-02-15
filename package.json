@@ -1,0 +1,32 @@
+{
+  "name": "koishi-plugin-temporaryban",
+  "version": "1.0.0",
+  "description": "OneBot违禁词检测禁言插件",
+  "main": "lib/index.js",
+  "typings": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "dist"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc -w"
+  },
+  "keywords": [
+    "koishi",
+    "plugin",
+    "ban",
+    "temporaryban",
+    "onebot",
+    "qq"
+  ],
+  "peerDependencies": {
+    "koishi": "^4.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "koishi": "^4.18.0",
+    "typescript": "^5.0.0"
+  }
+}
