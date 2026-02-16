@@ -70,6 +70,9 @@ export class WhitelistService {
     }
     this.cache.get(groupId)?.add(userId)
 
+    // Sync to Config
+    await this.syncToConfig(groupId, userId, 'add')
+
     return true
   }
 
@@ -82,23 +85,42 @@ export class WhitelistService {
       this.cache.get(groupId)?.delete(userId)
     }
 
-    // Note: If user is in Config whitelist, they are still effectively whitelisted unless we handle that.
-    // Ideally, we should warn or handle this. But for now, DB removal only affects DB entries.
-    // If the user was in Config, `isWhitelisted` will still return true because of the merge in `init`.
-    // BUT `init` is only called at start. So runtime cache is what matters.
-    // Actually, `init` merges config into cache. If we remove from cache here, it is removed from runtime check.
-    // But on restart, it will come back from Config.
-    // This is a known limitation of mixing Config and DB.
-    // We can just proceed.
-    
+    // Sync to Config
+    await this.syncToConfig(groupId, userId, 'remove')
+
     return (result.matched || 0) > 0
+  }
+
+  private async syncToConfig(groupId: string, userId: string, action: 'add' | 'remove') {
+    try {
+      const config = this.ctx.scope.config
+      const groups = config.groups || []
+      const groupConfig = groups.find((g: any) => g.groupId === groupId)
+      
+      if (groupConfig) {
+        if (!groupConfig.whitelist) groupConfig.whitelist = []
+        
+        if (action === 'add') {
+          if (!groupConfig.whitelist.some((w: any) => w.userId === userId)) {
+            groupConfig.whitelist.push({ userId })
+          }
+        } else {
+          groupConfig.whitelist = groupConfig.whitelist.filter((w: any) => w.userId !== userId)
+        }
+        
+        // Update scope config
+        await this.ctx.scope.update(config)
+      }
+    } catch (err) {
+      this.logger.warn(`Failed to sync whitelist to config: ${err}`)
+    }
+  }
+
+  public getWhitelist(groupId: string): string[] {
+    return Array.from(this.cache.get(groupId) || [])
   }
 
   public isWhitelisted(groupId: string, userId: string): boolean {
     return this.cache.get(groupId)?.has(userId) || false
-  }
-
-  public getList(groupId: string): string[] {
-    return Array.from(this.cache.get(groupId) || [])
   }
 }

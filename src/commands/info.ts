@@ -16,7 +16,7 @@ export function registerInfoCommands(ctx: Context, config: Config, whitelistServ
       const groupConfig = config.groups.find(g => g.groupId === session.guildId)
       if (!groupConfig) return session.text('commands.temporaryban.messages.group_not_configured')
 
-      const whitelistCount = whitelistService.getList(session.guildId).length
+      const whitelistCount = whitelistService.getWhitelist(session.guildId).length
       
       const methods = groupConfig.detectionMethods.join(', ') || 'None'
       const smartVer = groupConfig.smartVerification ? 'ON' : 'OFF'

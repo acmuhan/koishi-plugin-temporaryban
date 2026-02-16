@@ -13,78 +13,53 @@ interface ViolationRecord {
 }
 
 export class MailerService {
+  private ctx: Context
   private logger: Logger
   private config: Config
-  private records: ViolationRecord[] = []
-  private storagePath: string
 
   constructor(ctx: Context, config: Config) {
+    this.ctx = ctx
     this.config = config
     this.logger = new Logger('temporaryban:mailer')
     
-    // Setup storage for persistence (simple JSON file)
-    this.storagePath = path.resolve(ctx.baseDir, 'data', 'temporaryban_records.json')
-    this.loadRecords()
-
     // Start periodic task if summary interval is set
-    if (this.config.smtp.summaryIntervalDays > 0) {
+    if (this.config.smtp?.summaryIntervalDays && this.config.smtp.summaryIntervalDays > 0) {
       // Check every hour if it's time to send (this is a simplified scheduler)
-      // For production, a more robust scheduler might be needed, but this works for now.
-      // We send reports based on interval from the *last send time* or just accumulate.
-      // Since we don't store "last sent time", we'll just run a check every day? 
-      // Better: use setInterval for the configured days.
       ctx.setInterval(() => {
-        this.sendSummaryReport(this.config.smtp.summaryIntervalDays * 24)
+        if (this.config.smtp) {
+          this.sendSummaryReport(this.config.smtp.summaryIntervalDays * 24)
+        }
       }, this.config.smtp.summaryIntervalDays * 24 * 60 * 60 * 1000)
     }
   }
 
-  private loadRecords() {
-    try {
-      if (fs.existsSync(this.storagePath)) {
-        const data = fs.readFileSync(this.storagePath, 'utf-8')
-        this.records = JSON.parse(data)
-      }
-    } catch (err) {
-      this.logger.warn(`Failed to load records: ${err}`)
-      this.records = []
-    }
-  }
-
-  private saveRecords() {
-    try {
-      const dir = path.dirname(this.storagePath)
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true })
-      }
-      fs.writeFileSync(this.storagePath, JSON.stringify(this.records, null, 2))
-    } catch (err) {
-      this.logger.error(`Failed to save records: ${err}`)
-    }
-  }
-
   async recordViolation(userId: string, groupId: string, words: string[], content: string) {
+    if (!this.config.smtp) return
+
     // If summary interval is 0, send immediately (legacy mode)
     if (this.config.smtp.summaryIntervalDays === 0) {
       await this.sendImmediate(userId, groupId, words, content)
       return
     }
 
-    // Otherwise, record it
-    this.records.push({
-      userId,
-      groupId,
-      words,
-      content,
-      timestamp: Date.now()
-    })
-    this.saveRecords()
-    this.logger.debug(`Violation recorded for user ${userId}. Total pending: ${this.records.length}`)
+    // Otherwise, record it to Database
+    try {
+      await this.ctx.database.create('temporaryban_violations', {
+        userId,
+        groupId,
+        words,
+        content,
+        timestamp: new Date()
+      })
+      this.logger.debug(`Violation recorded for user ${userId}.`)
+    } catch (err) {
+      this.logger.error(`Failed to record violation to DB: ${err}`)
+    }
   }
 
   // Old method for immediate sending
   private async sendImmediate(userId: string, groupId: string, words: string[], content: string) {
-    if (!this.config.smtp.host || this.config.smtp.receivers.length === 0) return
+    if (!this.config.smtp?.host || !this.config.smtp?.receivers?.length) return
 
     const transporter = this.createTransporter()
     const html = `
@@ -135,15 +110,23 @@ export class MailerService {
 
   // New method for summary report
   async sendSummaryReport(hours: number): Promise<{ success: boolean, count?: number, receivers?: number, error?: string }> {
-    if (!this.config.smtp.host || this.config.smtp.receivers.length === 0) {
+    if (!this.config.smtp?.host || !this.config.smtp?.receivers?.length) {
       return { success: false, error: 'smtp_not_configured' }
     }
 
-    const now = Date.now()
-    const cutoff = now - hours * 60 * 60 * 1000
+    const now = new Date()
+    const cutoff = new Date(now.getTime() - hours * 60 * 60 * 1000)
     
-    // Filter records within the time window
-    const targetRecords = this.records.filter(r => r.timestamp >= cutoff)
+    // Filter records within the time window from Database
+    let targetRecords: any[] = []
+    try {
+      targetRecords = await this.ctx.database.get('temporaryban_violations', {
+        timestamp: { $gte: cutoff }
+      })
+    } catch (err) {
+      this.logger.error(`Failed to fetch violations from DB: ${err}`)
+      return { success: false, error: 'db_error' }
+    }
     
     if (targetRecords.length === 0) {
       return { success: true, count: 0 }
@@ -154,7 +137,7 @@ export class MailerService {
     // Generate HTML Table
     const tableRows = targetRecords.map((r, index) => `
       <tr style="border-bottom: 1px solid #eee; background-color: ${index % 2 === 0 ? '#ffffff' : '#fcfcfc'};">
-        <td style="padding: 12px 8px; color: #666; font-size: 13px;">${new Date(r.timestamp).toLocaleString()}</td>
+        <td style="padding: 12px 8px; color: #666; font-size: 13px;">${r.timestamp.toLocaleString()}</td>
         <td style="padding: 12px 8px; font-weight: 500;">${r.groupId}</td>
         <td style="padding: 12px 8px;">${r.userId}</td>
         <td style="padding: 12px 8px;"><span style="background-color: #ffebee; color: #c62828; padding: 2px 6px; border-radius: 4px; font-size: 12px;">${r.words.join(', ')}</span></td>
@@ -231,17 +214,21 @@ export class MailerService {
     }
   }
 
-  private cleanupOldRecords(days: number) {
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
-    const initialLen = this.records.length
-    this.records = this.records.filter(r => r.timestamp >= cutoff)
-    if (this.records.length !== initialLen) {
-      this.saveRecords()
-      this.logger.info(`Cleaned up ${initialLen - this.records.length} old records.`)
+  private async cleanupOldRecords(days: number) {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+    try {
+      await this.ctx.database.remove('temporaryban_violations', {
+        timestamp: { $lt: cutoff }
+      })
+    } catch (err) {
+      this.logger.error(`Failed to cleanup old records: ${err}`)
     }
   }
 
   private createTransporter() {
+    if (!this.config.smtp) {
+      throw new Error('SMTP configuration is missing')
+    }
     return nodemailer.createTransport({
       host: this.config.smtp.host,
       port: this.config.smtp.port,

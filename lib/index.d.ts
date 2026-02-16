@@ -4,11 +4,27 @@ import { WhitelistTable } from './services/whitelist';
 export * from './config';
 export declare const name = "koishi-plugin-temporaryban";
 export declare const inject: string[];
+export interface IgnoredWordTable {
+    id: number;
+    groupId: string;
+    word: string;
+    createdAt: Date;
+}
+export interface ViolationTable {
+    id: number;
+    userId: string;
+    groupId: string;
+    words: string[];
+    content: string;
+    timestamp: Date;
+}
 declare module 'koishi' {
     interface Tables {
         temporaryban_badwords: BadWordTable;
         temporaryban_message_history: MessageHistoryTable;
         temporaryban_whitelist: WhitelistTable;
+        temporaryban_ignored_words: IgnoredWordTable;
+        temporaryban_violations: ViolationTable;
     }
 }
 export interface MessageHistoryTable {

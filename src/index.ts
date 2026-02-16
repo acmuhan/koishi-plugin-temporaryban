@@ -12,7 +12,7 @@ import { registerCommands } from './commands'
 export * from './config'
 
 export const name = 'koishi-plugin-temporaryban'
-export const inject = ['database']
+export const inject = ['database', 'http']
 
 export interface IgnoredWordTable {
   id: number
@@ -21,12 +21,22 @@ export interface IgnoredWordTable {
   createdAt: Date
 }
 
+export interface ViolationTable {
+  id: number
+  userId: string
+  groupId: string
+  words: string[]
+  content: string
+  timestamp: Date
+}
+
 declare module 'koishi' {
   interface Tables {
     temporaryban_badwords: BadWordTable
     temporaryban_message_history: MessageHistoryTable
     temporaryban_whitelist: WhitelistTable
     temporaryban_ignored_words: IgnoredWordTable
+    temporaryban_violations: ViolationTable
   }
 }
 
@@ -88,6 +98,17 @@ export function apply(ctx: Context, config: Config) {
     groupId: 'string',
     word: 'string',
     createdAt: 'timestamp',
+  }, {
+    autoInc: true,
+  })
+
+  ctx.model.extend('temporaryban_violations', {
+    id: 'unsigned',
+    userId: 'string',
+    groupId: 'string',
+    words: 'list',
+    content: 'text',
+    timestamp: 'timestamp',
   }, {
     autoInc: true,
   })
@@ -298,7 +319,7 @@ export function apply(ctx: Context, config: Config) {
 
     // 2. Track & Punish Calculation
     const recordKey = `${groupId}-${userId}`
-    const now = Date.now()
+    // 'now' variable is already declared above at line 262
     const triggerWindow = (groupConfig.triggerWindowMinutes ?? 5) * Time.minute
     
     let record = userRecords.get(recordKey)
@@ -328,16 +349,30 @@ export function apply(ctx: Context, config: Config) {
         const showWord = groupConfig.showCensoredWord ?? config.defaultShowCensoredWord ?? true
         const wordDisplay = showWord ? result.censoredText : '***'
         
-        // Format: "You triggered a forbidden word check: {0}\nCurrent violations: {1}/{2}\n{3} more violations will result in a {4} min mute."
-        const warningMsg = session.text('commands.temporaryban.messages.violation_detail', [
-          wordDisplay, 
-          currentCount, 
-          maxCount, 
-          remaining, 
-          muteMinutes
-        ])
+        let warningMsg = ''
+        if (groupConfig.warningTemplate) {
+          // Custom Template
+          warningMsg = groupConfig.warningTemplate
+            .replace(/{at}/g, h.at(userId).toString())
+            .replace(/{userId}/g, userId)
+            .replace(/{nick}/g, session.username || userId)
+            .replace(/{words}/g, wordDisplay!)
+            .replace(/{count}/g, String(currentCount))
+            .replace(/{maxCount}/g, String(maxCount))
+            .replace(/{muteMinutes}/g, String(muteMinutes))
+        } else {
+          // Default Template
+          const detailMsg = session.text('commands.temporaryban.messages.violation_detail', [
+            wordDisplay, 
+            currentCount, 
+            maxCount, 
+            remaining, 
+            muteMinutes
+          ])
+          warningMsg = h.at(userId) + ' ' + detailMsg
+        }
         
-        await session.send(h.at(userId) + ' ' + warningMsg)
+        await session.send(warningMsg)
       } catch (err) {
         logger.error(`[Send Failed] Group: ${groupId}, Error: ${err}`)
       }

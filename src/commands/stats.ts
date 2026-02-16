@@ -26,11 +26,26 @@ export function registerStatsCommands(ctx: Context, config: Config, userRecords:
     })
 
   // 8. Clean
-  cmd.subcommand('.clean <user:string>')
-    .action(async ({ session }, user) => {
+  cmd.subcommand('.clean [user:string]')
+    .option('all', '-a 清除本群所有违规记录')
+    .action(async ({ session, options }, user) => {
        if (!session) return
        if (!checkPermission(session, config)) return session.text('commands.temporaryban.messages.permission_denied')
        if (!session.guildId) return session.text('commands.temporaryban.messages.group_only')
+       
+       // Bulk Clean
+       if (options?.all) {
+         const prefix = `${session.guildId}-`
+         let removedCount = 0
+         for (const key of userRecords.keys()) {
+           if (key.startsWith(prefix)) {
+             userRecords.delete(key)
+             removedCount++
+           }
+         }
+         return session.text('commands.temporaryban.messages.all_records_cleared', [removedCount])
+       }
+
        if (!user) return session.text('commands.temporaryban.messages.specify_user_id')
        
        const key = `${session.guildId}-${user}`

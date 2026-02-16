@@ -38,11 +38,23 @@ export default {
         ignored_word_added: 'Added "{0}" to ignored words list.',
         ignored_word_removed: 'Removed "{0}" from ignored words list.',
         no_ignored_words: 'No ignored words.',
-        ignored_words_list: 'Ignored words ({0}):\n{1}'
-      }
-    },
+        ignored_words_list: 'Ignored words ({0}):\n{1}',
+        no_whitelist_users: 'Whitelist is empty.',
+         whitelist_users_list: 'Whitelist Users ({0}):\n{1}',
+         all_records_cleared: 'Cleared all violation records for this group ({0} records).'
+       }
+     },
     'temporaryban.info': {
       description: 'View current group configuration'
+    },
+    'temporaryban.whitelist': {
+      description: 'Whitelist Management'
+    },
+    'temporaryban.whitelist.list': {
+      description: 'List whitelisted users'
+    },
+    'temporaryban.whitelist.word': {
+      description: 'Ignored Word Management'
     },
     'temporaryban.whitelist.word.add': {
       description: 'Add ignored word to group'

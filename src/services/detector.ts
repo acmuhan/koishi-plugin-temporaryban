@@ -334,7 +334,7 @@ export class DetectorService {
 
   // --- OpenAI / SiliconFlow ---
   private async checkWithAI(content: string, threshold: number = 0.6): Promise<CheckResult> {
-    if (!this.config.openai.apiKey) {
+    if (!this.config.openai?.apiKey) {
       this.logger.warn('OpenAI/SiliconFlow API Key is missing.')
       return { detected: false }
     }
@@ -394,7 +394,7 @@ export class DetectorService {
 
   // --- Baidu Cloud ---
   private async checkWithBaidu(content: string): Promise<CheckResult> {
-    if (!this.config.baidu.apiKey || !this.config.baidu.secretKey) {
+    if (!this.config.baidu?.apiKey || !this.config.baidu?.secretKey) {
       this.logger.warn('Baidu API Key or Secret Key is missing.')
       return { detected: false }
     }
@@ -445,11 +445,13 @@ export class DetectorService {
 
   // --- Aliyun (Green 2.0 / Enhanced) ---
   private async checkWithAliyun(content: string): Promise<CheckResult> {
-    const { accessKeyId, accessKeySecret, endpoint } = this.config.aliyun
-    if (!accessKeyId || !accessKeySecret) {
+    const aliyunConfig = this.config.aliyun
+    if (!aliyunConfig?.accessKeyId || !aliyunConfig?.accessKeySecret) {
       this.logger.warn('Aliyun AccessKey ID or Secret is missing.')
       return { detected: false }
     }
+
+    const { accessKeyId, accessKeySecret, endpoint } = aliyunConfig
 
     // RPC Signature Implementation
     try {
@@ -515,11 +517,13 @@ export class DetectorService {
 
   // --- Tencent Cloud (TMS) ---
   private async checkWithTencent(content: string): Promise<CheckResult> {
-    const { secretId, secretKey, region } = this.config.tencent
-    if (!secretId || !secretKey) {
+    const tencentConfig = this.config.tencent
+    if (!tencentConfig?.secretId || !tencentConfig?.secretKey) {
       this.logger.warn('Tencent SecretId or SecretKey is missing.')
       return { detected: false }
     }
+
+    const { secretId, secretKey, region } = tencentConfig
 
     try {
       const endpoint = 'tms.tencentcloudapi.com'
@@ -556,6 +560,12 @@ export class DetectorService {
       // 4. Authorization Header
       const authorization = `${algorithm} Credential=${secretId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
 
+      if (this.config.debug) {
+        this.logger.debug(`[Tencent Request] URL: https://${endpoint}`)
+        this.logger.debug(`[Tencent Request] Payload: ${payloadStr}`)
+        this.logger.debug(`[Tencent Request] Headers: X-TC-Action=${action}, X-TC-Version=${version}, Authorization=${authorization}`)
+      }
+
       const response = await this.ctx.http.post(`https://${endpoint}`, payload, {
         headers: {
           'Authorization': authorization,
@@ -590,7 +600,7 @@ export class DetectorService {
   }
 
   private async checkWithApi(content: string): Promise<CheckResult> {
-    if (!this.config.api.apiId || !this.config.api.apiKey) {
+    if (!this.config.api?.apiId || !this.config.api?.apiKey) {
       this.logger.warn('API ID or Key is missing. Skipping API detection.')
       return { detected: false }
     }
