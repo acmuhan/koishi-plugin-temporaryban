@@ -148,4 +148,4 @@ MIT
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=koishijs/koishi-plugin-temporaryban&type=Date)](https://star-history.com/#koishijs/koishi-plugin-temporaryban&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=koishijs/koishi-plugin-temporaryban&type=Date)](https://star-history.com/#acmuhan/koishi-plugin-temporaryban&Date)
