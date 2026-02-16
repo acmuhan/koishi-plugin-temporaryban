@@ -29,11 +29,24 @@ export default {
         report_sent: '报告已成功发送给 {0} 位接收者。数量: {1}',
         report_failed: '发送邮件失败: {0}',
         no_violations: '指定期间内未发现违规记录。',
-        smtp_not_configured: 'SMTP 未配置或没有接收者。'
+        smtp_not_configured: 'SMTP 未配置或没有接收者。',
+        no_history: '用户 {0} 没有最近的历史记录。',
+        history_list: '用户 {0} 的最近历史记录:\n{1}',
+        cleanup_info: '缓存清理主要由系统自动进行。',
+        group_info: '群组信息 ({0}):\n状态: {1}\n检测方式: {2}\n智能验证: {3}\n触发阈值: {4}次\n禁言时长: {5}分钟\n白名单人数: {6}'
       }
+    },
+    'temporaryban.info': {
+      description: '查看当前群组的配置信息'
     },
     'temporaryban.report': {
       description: '手动触发违规报告（仅限全局管理员）'
+    },
+    'temporaryban.history': {
+      description: '查看用户最近的历史记录 (Admin)'
+    },
+    'temporaryban.cleancache': {
+      description: '清理缓存 (Global Admin)'
     },
     'temporaryban.add': {
       description: '添加违禁词到当前群组'

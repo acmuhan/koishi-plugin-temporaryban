@@ -1,6 +1,8 @@
 import { Context, Logger } from 'koishi'
 import { Config, BadWordItem } from '../config'
 import * as crypto from 'crypto'
+import { SYSTEM_PROMPT } from '../utils/prompt'
+import { HistoryService } from './history'
 
 export interface CheckResult {
   detected: boolean
@@ -8,15 +10,25 @@ export interface CheckResult {
   detectedWords?: string[]
 }
 
+interface AIResponse {
+  isAbuse: boolean
+  type: string
+  level: number
+  wordIdx: [number, number]
+  sentence: string
+}
+
 export class DetectorService {
   private ctx: Context
   private config: Config
   private logger: Logger
   private localDictCache: Map<string, BadWordItem[]> = new Map()
+  private history: HistoryService
 
-  constructor(ctx: Context, config: Config) {
+  constructor(ctx: Context, config: Config, history: HistoryService) {
     this.ctx = ctx
     this.config = config
+    this.history = history
     this.logger = new Logger('temporaryban:detector')
     this.initCache()
   }
@@ -159,19 +171,157 @@ export class DetectorService {
     this.init().catch(err => this.logger.error('Failed to reload from DB', err))
   }
 
-  async check(content: string, groupId: string, method: 'local' | 'api' | 'baidu' | 'aliyun' | 'tencent'): Promise<CheckResult> {
-    switch (method) {
-      case 'api':
-        return this.checkWithApi(content)
-      case 'baidu':
-        return this.checkWithBaidu(content)
-      case 'aliyun':
-        return this.checkWithAliyun(content)
-      case 'tencent':
-        return this.checkWithTencent(content)
-      case 'local':
-      default:
-        return this.checkWithLocal(content, groupId)
+  async check(content: string, groupId: string, userId: string, groupConfig: any): Promise<CheckResult> {
+    const methods = groupConfig.detectionMethods || ['local']
+    let initialDetection: CheckResult = { detected: false }
+    let hitMethod = ''
+
+    if (this.config.debug && groupConfig.detailedLog) {
+      this.logger.debug(`[Check] Group: ${groupId}, User: ${userId}, Methods: ${methods.join(',')}`)
+    }
+
+    // 1. Initial Check (Parallel or Sequential)
+    // We check in priority order: Local -> API -> Cloud -> AI
+    // If Smart Verification is ON, we stop at Local/API hit and verify with AI.
+    
+    // Check Local
+    if (methods.includes('local')) {
+      const res = this.checkWithLocal(content, groupId)
+      if (res.detected) {
+        if (this.config.debug && groupConfig.detailedLog) this.logger.debug(`[Check] Local hit: ${res.detectedWords?.join(',')}`)
+        initialDetection = res
+        hitMethod = 'local'
+      }
+    }
+
+    // Check API (if local didn't hit or we want to check all? Let's check until first hit for efficiency unless we need all)
+    // User wants "multiple options", implying potentially multiple checks.
+    // But for "Smart Verification", if Local hits, we verify.
+    if (!initialDetection.detected && methods.includes('api')) {
+      const res = await this.checkWithApi(content)
+      if (res.detected) {
+        if (this.config.debug && groupConfig.detailedLog) this.logger.debug(`[Check] API hit: ${res.detectedWords?.join(',')}`)
+        initialDetection = res
+        hitMethod = 'api'
+      }
+    }
+
+    // Cloud Checks
+    if (!initialDetection.detected) {
+      if (methods.includes('baidu')) {
+        const res = await this.checkWithBaidu(content)
+        if (res.detected) { initialDetection = res; hitMethod = 'baidu' }
+      } else if (methods.includes('aliyun')) {
+        const res = await this.checkWithAliyun(content)
+        if (res.detected) { initialDetection = res; hitMethod = 'aliyun' }
+      } else if (methods.includes('tencent')) {
+        const res = await this.checkWithTencent(content)
+        if (res.detected) { initialDetection = res; hitMethod = 'tencent' }
+      }
+    }
+
+    // AI Check (Direct usage, not verification)
+    if (!initialDetection.detected && methods.includes('ai')) {
+      // If AI is used as a primary method, we just call it with current content
+      const res = await this.checkWithAI(content, groupConfig.aiThreshold)
+      if (res.detected) {
+        if (this.config.debug && groupConfig.detailedLog) this.logger.debug(`[Check] AI hit.`)
+        initialDetection = res
+        hitMethod = 'ai'
+      }
+    }
+
+    // 2. Smart Verification Logic
+    if (initialDetection.detected && groupConfig.smartVerification && methods.includes('ai')) {
+      // Only verify if hit came from non-AI methods (Local/API/Cloud)
+      if (hitMethod !== 'ai') {
+        this.logger.info(`[Smart Verification] Triggered by ${hitMethod}. Verifying with AI...`)
+        
+        // Fetch Context
+        const history = await this.history.get(groupId, userId, groupConfig.contextMsgCount || 3)
+        // Construct Contextual Prompt
+        let contextPrompt = ''
+        if (history.length > 0) {
+          contextPrompt += '[History]\n'
+          history.forEach(msg => {
+            contextPrompt += `Content: ${msg.content}\n`
+          })
+        }
+        contextPrompt += `[Current]\nContent: ${content}`
+        
+        // Verify
+        const aiRes = await this.checkWithAI(contextPrompt, groupConfig.aiThreshold)
+        
+        if (aiRes.detected) {
+          this.logger.info(`[Smart Verification] Confirmed violation.`)
+          return aiRes // Return AI result (usually more accurate/detailed)
+        } else {
+          this.logger.info(`[Smart Verification] False positive dismissed by AI.`)
+          return { detected: false } // AI overrides as safe
+        }
+      }
+    }
+
+    return initialDetection
+  }
+
+  // --- OpenAI / SiliconFlow ---
+  private async checkWithAI(content: string, threshold: number = 0.6): Promise<CheckResult> {
+    if (!this.config.openai.apiKey) {
+      this.logger.warn('OpenAI/SiliconFlow API Key is missing.')
+      return { detected: false }
+    }
+
+    try {
+      const response = await this.ctx.http.post(`${this.config.openai.baseUrl}/chat/completions`, {
+        model: this.config.openai.model,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: content }
+        ],
+        stream: false,
+        response_format: { type: 'json_object' }
+      }, {
+        headers: {
+          'Authorization': `Bearer ${this.config.openai.apiKey}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (this.config.debug) {
+        this.logger.debug(`[AI Response] ${JSON.stringify(response)}`)
+      }
+
+      const choice = response.choices?.[0]
+      if (!choice || !choice.message?.content) {
+        this.logger.warn('AI returned empty response.')
+        return { detected: false }
+      }
+
+      const contentStr = choice.message.content.trim()
+      const jsonStr = contentStr.replace(/^```json\s*/, '').replace(/\s*```$/, '')
+      
+      let result: AIResponse
+      try {
+        result = JSON.parse(jsonStr)
+      } catch (e) {
+        this.logger.error(`Failed to parse AI JSON response: ${contentStr}`, e)
+        return { detected: false }
+      }
+
+      // Check Threshold
+      if (result.isAbuse && result.level >= threshold) {
+        return {
+          detected: true,
+          censoredText: result.sentence,
+          detectedWords: [result.type, `Level:${result.level}`]
+        }
+      }
+
+      return { detected: false }
+    } catch (err) {
+      this.logger.error(`AI Check Failed: ${err}`)
+      return { detected: false }
     }
   }
 

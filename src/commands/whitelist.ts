@@ -1,8 +1,9 @@
 import { Context } from 'koishi'
 import { Config } from '../config'
 import { checkPermission } from '../utils/permission'
+import { WhitelistService } from '../services/whitelist'
 
-export function registerWhitelistCommands(ctx: Context, config: Config) {
+export function registerWhitelistCommands(ctx: Context, config: Config, whitelistService: WhitelistService) {
   const cmd = ctx.command('temporaryban')
 
   // 5. Whitelist Add
@@ -16,11 +17,9 @@ export function registerWhitelistCommands(ctx: Context, config: Config) {
        const groupConfig = config.groups.find(g => g.groupId === session.guildId)
        if (!groupConfig) return session.text('commands.temporaryban.messages.group_not_configured')
        
-       if (groupConfig.whitelist.some(u => u.userId === user)) return session.text('commands.temporaryban.messages.already_whitelisted')
-       groupConfig.whitelist.push({ userId: user })
-       try {
-        await ctx.scope.update(config)
-      } catch (e) { }
+       const success = await whitelistService.add(session.guildId, user)
+       if (!success) return session.text('commands.temporaryban.messages.already_whitelisted')
+       
        return session.text('commands.temporaryban.messages.user_added_whitelist', [user])
     })
 
@@ -34,12 +33,9 @@ export function registerWhitelistCommands(ctx: Context, config: Config) {
        const groupConfig = config.groups.find(g => g.groupId === session.guildId)
        if (!groupConfig) return session.text('commands.temporaryban.messages.group_not_configured')
        
-       const idx = groupConfig.whitelist.findIndex(u => u.userId === user)
-       if (idx === -1) return session.text('commands.temporaryban.messages.not_in_whitelist')
-       groupConfig.whitelist.splice(idx, 1)
-       try {
-        await ctx.scope.update(config)
-      } catch (e) { }
+       const success = await whitelistService.remove(session.guildId, user)
+       if (!success) return session.text('commands.temporaryban.messages.not_in_whitelist')
+       
        return session.text('commands.temporaryban.messages.user_removed_whitelist', [user])
     })
 }

@@ -17,7 +17,8 @@ export function registerCheckCommands(ctx: Context, config: Config, detector: De
        const groupConfig = config.groups.find(g => g.groupId === session.guildId)
        if (!groupConfig) return session.text('commands.temporaryban.messages.group_not_configured')
        
-       const res = await detector.check(text, session.guildId, groupConfig.detectionMethod)
+       // Mock userId for check command
+       const res = await detector.check(text, session.guildId, session.userId || 'anonymous', groupConfig)
        if (res.detected) {
          return session.text('commands.temporaryban.messages.detected', [res.detectedWords?.join(', ')])
        }

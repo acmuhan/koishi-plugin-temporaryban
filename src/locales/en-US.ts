@@ -29,11 +29,24 @@ export default {
         report_sent: 'Report sent successfully to {0} receivers. Count: {1}',
         report_failed: 'Failed to send email: {0}',
         no_violations: 'No violations found in the specified period.',
-        smtp_not_configured: 'SMTP not configured or no receivers.'
+        smtp_not_configured: 'SMTP not configured or no receivers.',
+        no_history: 'No recent history for user {0}.',
+        history_list: 'Recent history for user {0}:\n{1}',
+        cleanup_info: 'Cache cleanup is mainly handled automatically by the system.',
+        group_info: 'Group Info ({0}):\nStatus: {1}\nMethods: {2}\nSmart Verify: {3}\nThreshold: {4}\nMute: {5}min\nWhitelist: {6}'
       }
+    },
+    'temporaryban.info': {
+      description: 'View current group configuration'
     },
     'temporaryban.report': {
       description: 'Manually trigger violation report (Global Admin only)'
+    },
+    'temporaryban.history': {
+      description: 'View user recent history (Admin)'
+    },
+    'temporaryban.cleancache': {
+      description: 'Clean cache (Global Admin)'
     },
     'temporaryban.add': {
       description: 'Add a forbidden word to current group'

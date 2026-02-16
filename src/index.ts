@@ -2,6 +2,8 @@ import { Context, Session, Time, Logger, h } from 'koishi'
 import { Config, BadWordTable } from './config'
 import { DetectorService } from './services/detector'
 import { MailerService } from './services/mailer'
+import { HistoryService } from './services/history'
+import { WhitelistService, WhitelistTable } from './services/whitelist'
 import zhCN from './locales/zh-CN'
 import enUS from './locales/en-US'
 import { UserRecord } from './utils/types'
@@ -15,15 +17,28 @@ export const inject = ['database']
 declare module 'koishi' {
   interface Tables {
     temporaryban_badwords: BadWordTable
+    temporaryban_message_history: MessageHistoryTable
+    temporaryban_whitelist: WhitelistTable
   }
+}
+
+export interface MessageHistoryTable {
+  id: number
+  groupId: string
+  userId: string
+  content: string
+  timestamp: Date
+  messageId?: string
 }
 
 const logger = new Logger('temporaryban')
 
 export function apply(ctx: Context, config: Config) {
   // --- Services ---
-  const detector = new DetectorService(ctx, config)
+  const history = new HistoryService(ctx)
+  const detector = new DetectorService(ctx, config, history)
   const mailer = new MailerService(ctx, config) // Pass context for baseDir access
+  const whitelistService = new WhitelistService(ctx, config)
 
   // --- Runtime State ---
   const userRecords = new Map<string, UserRecord>() // Key: groupId-userId
@@ -40,16 +55,37 @@ export function apply(ctx: Context, config: Config) {
     autoInc: true,
   })
 
+  ctx.model.extend('temporaryban_message_history', {
+    id: 'unsigned',
+    groupId: 'string',
+    userId: 'string',
+    content: 'text',
+    timestamp: 'timestamp',
+    messageId: 'string',
+  }, {
+    autoInc: true,
+  })
+
+  ctx.model.extend('temporaryban_whitelist', {
+    id: 'unsigned',
+    groupId: 'string',
+    userId: 'string',
+    createdAt: 'timestamp',
+  }, {
+    autoInc: true,
+  })
+
   // --- Lifecycle ---
   ctx.on('ready', async () => {
     logger.info('Plugin initialized.')
     logger.info(`Monitored groups: ${config.groups.length}`)
     
-    // Initialize detector with database data
+    // Initialize services
     try {
       await detector.init()
+      await whitelistService.init()
     } catch (err) {
-      logger.error('Failed to initialize detector:', err)
+      logger.error('Failed to initialize services:', err)
     }
     
     if (config.debug) {
@@ -67,7 +103,7 @@ export function apply(ctx: Context, config: Config) {
   }, 60 * 1000)
 
   // --- Register Commands ---
-  registerCommands(ctx, config, detector, mailer, userRecords)
+  registerCommands(ctx, config, detector, mailer, userRecords, history, whitelistService)
 
   // --- Message Handler ---
   ctx.on('message', async (session: Session) => {
@@ -132,6 +168,57 @@ export function apply(ctx: Context, config: Config) {
       return
     }
 
+    // --- Bot Admin Permission Check ---
+    if (config.checkAdmin) {
+      try {
+        const botMember = await session.bot.getGuildMember(groupId, session.bot.selfId)
+        const botRoles = botMember?.roles || []
+        const isBotAdmin = botRoles.includes('admin') || botRoles.includes('owner')
+        
+        if (config.debug) {
+           logger.debug(`[Group: ${groupId}] Bot Roles: ${botRoles.join(', ')}. Admin? ${isBotAdmin}`)
+        }
+
+        if (!isBotAdmin) {
+          if (config.debug) {
+            logger.debug(`[Group: ${groupId}] Skipped: Bot is not admin/owner.`)
+          }
+          return
+        }
+      } catch (err) {
+        // If failed to get member info (e.g. platform not supported), log warning but maybe proceed or skip?
+        // Safe default: Skip to avoid errors or ineffective actions.
+        logger.warn(`[Group: ${groupId}] Failed to check bot permission: ${err}`)
+        if (config.debug) return 
+      }
+    }
+
+    // --- Global Default Fallback Logic ---
+    // Merge group config with global defaults
+    const effectiveConfig = {
+      ...groupConfig,
+      muteMinutes: groupConfig.muteMinutes ?? config.defaultMuteMinutes,
+      triggerThreshold: groupConfig.triggerThreshold ?? config.defaultTriggerThreshold,
+      aiThreshold: groupConfig.aiThreshold ?? config.defaultAiThreshold,
+      checkProbability: groupConfig.checkProbability ?? config.defaultCheckProbability,
+      // Others remain as is (they have defaults in Schema or are required)
+    }
+
+    if (config.debug && groupConfig.detailedLog) {
+       logger.debug(`[Group: ${groupId}] Effective Config: Mute=${effectiveConfig.muteMinutes}m, Trigger=${effectiveConfig.triggerThreshold}, AI=${effectiveConfig.aiThreshold}, Prob=${effectiveConfig.checkProbability}`)
+    }
+
+    // --- Check Probability ---
+    if (effectiveConfig.checkProbability < 1.0) {
+      const rand = Math.random()
+      if (rand > effectiveConfig.checkProbability) {
+        if (config.debug && groupConfig.detailedLog) {
+          logger.debug(`[Group: ${groupId}] [User: ${userId}] Skipped by probability (Rand=${rand.toFixed(2)} > Prob=${effectiveConfig.checkProbability}).`)
+        }
+        return
+      }
+    }
+
     // Throttle
     const throttleKey = `${groupId}-${userId}`
     const now = Date.now()
@@ -144,7 +231,7 @@ export function apply(ctx: Context, config: Config) {
     messageThrottle.set(throttleKey, now)
 
     // Whitelist
-    if (groupConfig.whitelist.some(w => w.userId === userId)) {
+    if (whitelistService.isWhitelisted(groupId, userId)) {
       if (config.debug) {
         logger.debug(`[Group: ${groupId}] [User: ${userId}] Whitelisted.`)
       }
@@ -152,10 +239,18 @@ export function apply(ctx: Context, config: Config) {
     }
 
     // Detection
-    const result = await detector.check(session.content!, groupId, groupConfig.detectionMethod)
+    // Pass effectiveConfig which contains the merged thresholds
+    const result = await detector.check(session.content!, groupId, userId, effectiveConfig)
+
+    // Store message in history (after check, or before? If before, current msg is in history for verification)
+    // The requirement says "Output user recent ? messages".
+    // If we verify, we usually exclude the current message from "history" part of prompt and put it in "current".
+    // So we add to history AFTER check is done (or if safe).
+    // Actually, for "recent context", we should store every text message.
+    await history.add(groupId, userId, session.content!, messageId)
 
     if (!result.detected) {
-      if (config.debug) logger.debug(`[DEBUG] No violation detected in group ${groupId}.`)
+      if (config.debug && groupConfig.detailedLog) logger.debug(`[DEBUG] No violation detected in group ${groupId}.`)
       return
     }
 
@@ -172,6 +267,7 @@ export function apply(ctx: Context, config: Config) {
           // Fallback for OneBot or non-standard adapters
           const bot = session.bot as any
           if (bot.delete_msg) {
+            // @ts-ignore
             await bot.delete_msg({ group_id: groupId, message_id: messageId })
           } else {
              logger.warn('[Recall Failed] No delete method available.')
@@ -200,7 +296,8 @@ export function apply(ctx: Context, config: Config) {
     // 4. Track & Punish
     const recordKey = `${groupId}-${userId}`
     let record = userRecords.get(recordKey)
-    const triggerWindow = groupConfig.triggerWindowMinutes * Time.minute
+    // Use effectiveConfig
+    const triggerWindow = (groupConfig.triggerWindowMinutes ?? 5) * Time.minute
 
     if (!record) {
       record = { count: 1, firstTime: now }
@@ -215,10 +312,10 @@ export function apply(ctx: Context, config: Config) {
       }
     }
 
-    logger.info(`[COUNT] [Group: ${groupId}] [User: ${userId}] ${record.count}/${groupConfig.triggerThreshold}`)
+    logger.info(`[COUNT] [Group: ${groupId}] [User: ${userId}] ${record.count}/${effectiveConfig.triggerThreshold}`)
 
-    if (record.count >= groupConfig.triggerThreshold) {
-      const muteSeconds = Math.floor(groupConfig.muteMinutes * 60)
+    if (record.count >= effectiveConfig.triggerThreshold) {
+      const muteSeconds = Math.floor(effectiveConfig.muteMinutes * 60)
       try {
         if (session.bot.muteGuildMember) {
            // Ensure parameters are correct: guildId, userId, milliseconds
@@ -227,6 +324,7 @@ export function apply(ctx: Context, config: Config) {
            const bot = session.bot as any
            if (bot.set_group_ban) {
              // OneBot legacy: group_id, user_id, duration(seconds)
+             // @ts-ignore
              await bot.set_group_ban(groupId, userId, muteSeconds)
            } else {
              logger.warn('[Mute Failed] No mute method available.')
