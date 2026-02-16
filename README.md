@@ -2,13 +2,126 @@
 
 [![npm](https://img.shields.io/npm/v/koishi-plugin-temporaryban?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-temporaryban)
 
+[English](#english) | [中文](#chinese)
+
+<a name="english"></a>
+## English
+
+A powerful Koishi forbidden words detection and temporary ban plugin. Supports database persistence for word lists, multiple detection mechanisms, automatic email reporting, and comprehensive group management commands.
+
+### ✨ Key Features
+
+- **Multiple Detection Mechanisms**:
+  - 🏠 **Local Dictionary (Database)**: Supports dynamic addition/deletion via database, no restart required.
+  - ☁️ **Cloud API**: Integrated **Baidu AI**, **Aliyun Green**, and **Tencent Cloud TMS** for intelligent detection.
+  - 🌐 **Online API**: Supports generic online API detection.
+- **Smart Punishment System**:
+  - 🚫 Automatically recalls violating messages.
+  - ⏱️ Triggers automatic mute after cumulative violations.
+  - 🛡️ **Dynamic Whitelist**: Automatically recognizes group owners and admins; supports manual user whitelist configuration.
+- **Email Notification & Summary**:
+  - 📧 Supports immediate notification for each violation.
+  - 📊 **Daily/Periodic Summary**: Supports sending summary reports every N days to avoid spam.
+  - 🎨 Beautiful HTML email templates.
+- **Convenient Management Commands**:
+  - New `temporaryban` command system for managing word lists, whitelists, and viewing statistics directly in groups.
+
+### 📦 Installation
+
+This plugin depends on Koishi's **Database** service. Please ensure you have installed and configured a database plugin (e.g., MySQL, SQLite).
+
+```bash
+# Install plugin
+npm install koishi-plugin-temporaryban
+
+# Install database plugin (e.g., mysql)
+npm install @koishijs/plugin-database-mysql
+```
+
+### ⚙️ Configuration
+
+#### 1. Basic Settings
+
+- **`debug`**: Enable debug mode for detailed logs.
+- **`adminList`**: Global admin list (User ID). Users in this list can use advanced management commands (e.g., manual report trigger).
+
+#### 2. Cloud API Configuration
+
+Supports **Baidu AI**, **Aliyun**, and **Tencent Cloud**. Configure the respective sections (`baidu`, `aliyun`, `tencent`) with your API keys if you wish to use them.
+
+#### 3. Email Notification (SMTP)
+
+| Option | Description | Example |
+| --- | --- | --- |
+| `host` | SMTP Server Address | `smtp.qq.com` |
+| `port` | SMTP Port | `465` (SSL) |
+| `user` | Sender Account | `123456@qq.com` |
+| `pass` | **Authorization Code/Password** | Use Auth Code for QQ Mail |
+| `receivers` | List of admin emails to receive notifications | `['admin@example.com']` |
+| `summaryIntervalDays` | **Summary Interval (Days)** | `1` (Daily); `0` (Immediate) |
+
+#### 4. Group Monitoring (Groups)
+
+You can configure each group separately:
+
+- **`groupId`**: Target Group ID.
+- **`detectionMethod`**: Detection method (`local`, `api`, `baidu`, `aliyun`, `tencent`).
+- **`triggerThreshold`**: Violations count to trigger mute (Default: 3).
+- **`triggerWindowMinutes`**: Violation counting window (Default: 5 mins).
+- **`muteMinutes`**: Mute duration (Default: 10 mins).
+
+### 💻 Commands
+
+All commands start with `temporaryban`.
+
+#### Global Commands
+*Global Admins (`config.adminList`) only*
+
+- **`temporaryban.report`**
+  - Manually trigger a violation summary report for the last 24 hours and send via email.
+
+#### Group Management Commands
+*Group Owner, Group Admin, or Global Admin only*
+
+- **`temporaryban.add <word>`**
+  - Add a forbidden word to the current group dictionary.
+- **`temporaryban.remove <word>`**
+  - Remove a forbidden word from the current group dictionary.
+- **`temporaryban.list`**
+  - List all forbidden words in the current group.
+- **`temporaryban.whitelist.add <user>`**
+  - Add a user to the current group whitelist.
+- **`temporaryban.whitelist.remove <user>`**
+  - Remove a user from the current group whitelist.
+- **`temporaryban.stats`**
+  - View violation statistics for the current period.
+- **`temporaryban.clean <user>`**
+  - Clear violation records for a user (Manual pardon).
+- **`temporaryban.check <text>`**
+  - Check if text contains forbidden words (Detection only, no punishment).
+
+### 🛠️ Development
+
+This project follows a modular structure:
+
+- **`src/commands/`**: Command implementations split by category.
+- **`src/services/`**: Core logic (Detector, Mailer).
+- **`src/utils/`**: Helper functions and types.
+- **`src/locales/`**: Internationalization files.
+
+---
+
+<a name="chinese"></a>
+## 中文
+
 一个功能强大的 Koishi 违禁词检测与自动禁言插件。支持数据库持久化词库、多重检测机制、自动邮件汇报以及完善的群组管理指令。
 
-## ✨ 核心特性
+### ✨ 核心特性
 
 - **多重检测机制**：
   - 🏠 **本地词库 (Database)**：基于数据库存储，支持动态添加/删除，无需重启。
-  - 🌐 **在线 API**：集成 ApiHz 敏感词检测接口，支持智能识别。
+  - ☁️ **云端检测**：集成 **百度 AI**、**阿里云内容安全**、**腾讯云 TMS**，支持智能识别。
+  - 🌐 **在线 API**：支持通用 API 敏感词检测接口。
 - **智能惩罚系统**：
   - 🚫 自动撤回违规消息。
   - ⏱️ 累计违规次数触发自动禁言。
@@ -20,7 +133,7 @@
 - **便捷的管理指令**：
   - 全新的 `temporaryban` 指令体系，支持在群内直接管理词库、白名单和查看统计。
 
-## 📦 安装与依赖
+### 📦 安装与依赖
 
 本插件需要依赖 Koishi 的 **Database** 服务。请确保您已安装并配置了任意一款数据库插件（如 MySQL, SQLite 等）。
 
@@ -32,14 +145,18 @@ npm install koishi-plugin-temporaryban
 npm install @koishijs/plugin-database-mysql
 ```
 
-## ⚙️ 配置说明
+### ⚙️ 配置说明
 
-### 1. 基础设置
+#### 1. 基础设置
 
 - **`debug`**: 开启调试模式，输出详细日志。
 - **`adminList`**: 全局管理员列表 (OneBot ID)。在此列表中的用户可以使用高级管理指令（如手动触发报告）。
 
-### 2. 邮件通知 (SMTP)
+#### 2. 云端检测配置
+
+支持 **百度 AI**、**阿里云**、**腾讯云**。请在配置项中分别填写对应的 API Key/Secret (`baidu`, `aliyun`, `tencent`) 以启用。
+
+#### 3. 邮件通知 (SMTP)
 
 | 配置项 | 说明 | 示例 |
 | --- | --- | --- |
@@ -50,28 +167,27 @@ npm install @koishijs/plugin-database-mysql
 | `receivers` | 接收通知的管理员邮箱列表 | `['admin@example.com']` |
 | `summaryIntervalDays` | **汇总周期(天)** | `1` (每天发送一次汇总); `0` (立即发送) |
 
-### 3. 群组监控 (Groups)
+#### 4. 群组监控 (Groups)
 
 您可以为每个群组单独配置：
 
 - **`groupId`**: 目标群号。
-- **`detectionMethod`**: 检测方式 (`local` 或 `api`)。
+- **`detectionMethod`**: 检测方式 (`local`, `api`, `baidu`, `aliyun`, `tencent`)。
 - **`triggerThreshold`**: 触发禁言的累计违规次数（默认 3 次）。
 - **`triggerWindowMinutes`**: 违规计数窗口时间（默认 5 分钟）。
 - **`muteMinutes`**: 禁言时长（默认 10 分钟）。
-- **`localBadWordDict`**: **[已弃用/仅供迁移]** 首次启动时会自动将此处的词汇导入数据库。之后的增删操作请使用指令。
 
-## 💻 指令使用
+### 💻 指令使用
 
 所有指令均以 `temporaryban` (或简写，需自行配置别名) 开头。
 
-### 全局指令
+#### 全局指令
 *仅限 `config.adminList` 中的全局管理员使用*
 
 - **`temporaryban.report`**
   - 手动触发最近 24 小时的违规汇总报告并发送邮件。
 
-### 群组管理指令
+#### 群组管理指令
 *仅限群主、群管理员或全局管理员使用*
 
 - **`temporaryban.add <word>`**
@@ -94,12 +210,14 @@ npm install @koishijs/plugin-database-mysql
   - 检测一段文本是否包含违禁词（仅检测，不触发惩罚）。
   - 示例：`temporaryban.check 这句话有问题吗`
 
-## 🔄 迁移指南 (v1.3 -> v1.4)
+### 🛠️ 开发说明
 
-v1.4 版本引入了数据库支持。更新插件后：
-1. 插件会自动检测 `localBadWordDict` 中的配置。
-2. 如果数据库中该群组的词库为空，插件会自动将配置文件中的词汇导入数据库。
-3. 导入完成后，请使用指令管理词库。配置文件中的 `localBadWordDict` 将不再生效。
+本项目采用模块化结构开发：
+
+- **`src/commands/`**: 按类别拆分的命令实现。
+- **`src/services/`**: 核心服务逻辑 (Detector, Mailer)。
+- **`src/utils/`**: 工具函数和类型定义。
+- **`src/locales/`**: 国际化语言文件。
 
 ## 📝 License
 

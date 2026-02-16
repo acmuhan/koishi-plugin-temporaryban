@@ -38,7 +38,7 @@ export interface GroupConfig {
   id: string
   groupId: string
   enable: boolean
-  detectionMethod: 'local' | 'api'
+  detectionMethod: 'local' | 'api' | 'baidu' | 'aliyun' | 'tencent'
   
   // Local Dictionary
   localBadWordDict: string
@@ -53,12 +53,32 @@ export interface GroupConfig {
   detailedLog: boolean
 }
 
+export interface BaiduConfig {
+  apiKey: string
+  secretKey: string
+}
+
+export interface AliyunConfig {
+  accessKeyId: string
+  accessKeySecret: string
+  endpoint: string
+}
+
+export interface TencentConfig {
+  secretId: string
+  secretKey: string
+  region: string
+}
+
 export interface Config {
   // Global Settings
   debug: boolean
   adminList: string[]
   smtp: SmtpConfig
   api: ApiConfig
+  baidu: BaiduConfig
+  aliyun: AliyunConfig
+  tencent: TencentConfig
   
   // Group Settings
   groups: GroupConfig[]
@@ -86,6 +106,23 @@ export const Config: Schema<Config> = Schema.object({
     apiKey: Schema.string().role('secret').description('ApiHz 开发者 Key (必填)').default(''),
   }).description('在线检测设置 (ApiHz)'),
 
+  baidu: Schema.object({
+    apiKey: Schema.string().description('百度智能云 API Key').default(''),
+    secretKey: Schema.string().role('secret').description('百度智能云 Secret Key').default(''),
+  }).description('百度智能云设置'),
+
+  aliyun: Schema.object({
+    accessKeyId: Schema.string().description('阿里云 AccessKey ID').default(''),
+    accessKeySecret: Schema.string().role('secret').description('阿里云 AccessKey Secret').default(''),
+    endpoint: Schema.string().description('阿里云内容安全 Endpoint').default('green-cip.cn-shanghai.aliyuncs.com'),
+  }).description('阿里云内容安全设置'),
+
+  tencent: Schema.object({
+    secretId: Schema.string().description('腾讯云 SecretId').default(''),
+    secretKey: Schema.string().role('secret').description('腾讯云 SecretKey').default(''),
+    region: Schema.string().description('腾讯云地域 (例如 ap-shanghai)').default('ap-shanghai'),
+  }).description('腾讯云内容安全设置'),
+
   groups: Schema.array(
     Schema.object({
       id: Schema.string().hidden().default(''),
@@ -94,7 +131,10 @@ export const Config: Schema<Config> = Schema.object({
       detectionMethod: Schema.union([
         Schema.const('local').description('本地词库 (数据库)'),
         Schema.const('api').description('在线 API (ApiHz)'),
-      ]).description('违禁词检测方式。推荐使用本地词库以获得更快的响应速度。').default('local'),
+        Schema.const('baidu').description('百度智能云'),
+        Schema.const('aliyun').description('阿里云 (内容安全增强版)'),
+        Schema.const('tencent').description('腾讯云 (TMS)'),
+      ]).description('违禁词检测方式。').default('local'),
       
       localBadWordDict: Schema.string()
         .description('【初始导入/Legacy】本地违禁词库配置。插件现已使用数据库存储词库。首次启动时，若数据库为空，将自动导入此处的词汇。之后的增删操作请使用指令 `temporaryban.add/remove`，此配置项将不再生效。')

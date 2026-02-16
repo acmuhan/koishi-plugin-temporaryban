@@ -134,9 +134,9 @@ export class MailerService {
   }
 
   // New method for summary report
-  async sendSummaryReport(hours: number): Promise<string> {
+  async sendSummaryReport(hours: number): Promise<{ success: boolean, count?: number, receivers?: number, error?: string }> {
     if (!this.config.smtp.host || this.config.smtp.receivers.length === 0) {
-      return 'SMTP not configured or no receivers.'
+      return { success: false, error: 'smtp_not_configured' }
     }
 
     const now = Date.now()
@@ -146,7 +146,7 @@ export class MailerService {
     const targetRecords = this.records.filter(r => r.timestamp >= cutoff)
     
     if (targetRecords.length === 0) {
-      return 'No violations found in the specified period.'
+      return { success: true, count: 0 }
     }
 
     const transporter = this.createTransporter()
@@ -224,10 +224,10 @@ export class MailerService {
       
       this.cleanupOldRecords(7) // Keep 7 days history
       
-      return `Report sent successfully to ${this.config.smtp.receivers.length} receivers. Count: ${targetRecords.length}`
+      return { success: true, count: targetRecords.length, receivers: this.config.smtp.receivers.length }
     } catch (err) {
       this.logger.error(`Failed to send summary email: ${err}`)
-      return `Failed to send email: ${err}`
+      return { success: false, error: String(err) }
     }
   }
 
