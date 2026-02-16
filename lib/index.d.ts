@@ -26,6 +26,9 @@ declare module 'koishi' {
         temporaryban_ignored_words: IgnoredWordTable;
         temporaryban_violations: ViolationTable;
     }
+    interface Context {
+        console: any;
+    }
 }
 export interface MessageHistoryTable {
     id: number;

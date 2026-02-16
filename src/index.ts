@@ -38,6 +38,10 @@ declare module 'koishi' {
     temporaryban_ignored_words: IgnoredWordTable
     temporaryban_violations: ViolationTable
   }
+  
+  interface Context {
+    console: any
+  }
 }
 
 export interface MessageHistoryTable {
@@ -130,6 +134,46 @@ export function apply(ctx: Context, config: Config) {
       logger.info('Debug mode enabled. Detailed logs will be output.')
     }
   })
+
+  // --- Console Integration ---
+  if (ctx.console) {
+    ctx.console.addEntry({
+      dev: '../client/index.ts',
+      prod: '../dist/client/index.js',
+    })
+
+    ctx.console.addListener('temporaryban/get-stats', async () => {
+      try {
+        const now = new Date()
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+        
+        const totalViolations = await ctx.database.eval('temporaryban_violations', { $count: 'id' } as any)
+        const todayViolations = await ctx.database.eval('temporaryban_violations', { 
+          $count: 'id',
+          $where: { timestamp: { $gte: todayStart } }
+        } as any)
+
+        const activeGroups = config.groups.filter(g => g.enable).length
+
+        const recentRecords = await ctx.database.get('temporaryban_violations', {}, {
+          limit: 10,
+          sort: { timestamp: 'desc' }
+        })
+
+        return {
+          stats: {
+            totalViolations,
+            todayViolations,
+            activeGroups
+          },
+          recentRecords
+        }
+      } catch (err) {
+        logger.error('Failed to fetch console stats:', err)
+        return { stats: {}, recentRecords: [] }
+      }
+    })
+  }
 
   // --- I18n ---
   ctx.i18n.define('zh-CN', zhCN)
