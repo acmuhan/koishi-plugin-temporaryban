@@ -5,6 +5,13 @@ export interface BadWordItem {
   word: string
 }
 
+export interface BadWordTable {
+  id: number
+  groupId: string
+  word: string
+  createdAt: Date
+}
+
 export interface WhitelistItem {
   userId: string
 }
@@ -90,7 +97,7 @@ export const Config: Schema<Config> = Schema.object({
       ]).description('检测方式').default('local'),
       
       localBadWordDict: Schema.string()
-        .description('本地违禁词库 (格式: (1.词1)(2.词2))')
+        .description('本地违禁词库 (初始导入/Legacy)。插件现已使用数据库存储词库。首次启动时，若数据库为空，将自动导入此处的词汇。之后的增删操作将直接修改数据库，不再同步回此配置。')
         .default(''),
         
       whitelist: Schema.array(

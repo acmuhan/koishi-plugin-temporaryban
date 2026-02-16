@@ -1,11 +1,18 @@
 import { Context, Session, Time, Logger, h } from 'koishi'
-import { Config } from './config'
+import { Config, BadWordTable } from './config'
 import { DetectorService } from './services/detector'
 import { MailerService } from './services/mailer'
 
 export * from './config'
 
 export const name = 'koishi-plugin-temporaryban'
+export const inject = ['database']
+
+declare module 'koishi' {
+  interface Tables {
+    temporaryban_badwords: BadWordTable
+  }
+}
 
 const logger = new Logger('temporaryban')
 
@@ -24,10 +31,28 @@ export function apply(ctx: Context, config: Config) {
   const messageThrottle = new Map<string, number>()
   const THROTTLE_LIMIT = 500 // 500ms
 
+  // --- Database Model ---
+  ctx.model.extend('temporaryban_badwords', {
+    id: 'unsigned',
+    groupId: 'string',
+    word: 'string',
+    createdAt: 'timestamp',
+  }, {
+    autoInc: true,
+  })
+
   // --- Lifecycle ---
-  ctx.on('ready', () => {
+  ctx.on('ready', async () => {
     logger.info('Plugin initialized.')
     logger.info(`Monitored groups: ${config.groups.length}`)
+    
+    // Initialize detector with database data
+    try {
+      await detector.init()
+    } catch (err) {
+      logger.error('Failed to initialize detector:', err)
+    }
+    
     if (config.debug) {
       logger.info('Debug mode enabled. Detailed logs will be output.')
     }
@@ -39,20 +64,164 @@ export function apply(ctx: Context, config: Config) {
   }, 60 * 1000)
 
   // --- Admin Command ---
-  // We use a middleware or check in 'message' to avoid Koishi command system if desired,
-  // but ctx.command is standard. To bypass permission system, we check config manually.
-  ctx.command('banreport', 'Manually trigger violation report (Admin only)')
-    .action(async ({ session }) => {
-      if (!session?.userId) return
-      
-      // Check admin permission from config
-      if (!config.adminList?.includes(session.userId)) {
-        return // Silently ignore or return 'Permission denied'
-      }
+  const cmd = ctx.command('temporaryban', 'Temporary Ban Plugin Management')
 
-      // Send summary for last 24 hours
+  const checkPermission = (session: Session) => {
+    if (!session?.userId) return false
+    // 1. Global Admin
+    if (config.adminList?.includes(session.userId)) return true
+    // 2. Group Admin/Owner (Dynamic)
+    const roles = session.author?.roles || []
+    return roles.includes('admin') || roles.includes('owner')
+  }
+
+  // 1. Report (Global Admin Only)
+  cmd.subcommand('.report', 'Manually trigger violation report (Global Admin only)')
+    .action(async ({ session }) => {
+      if (!session?.userId || !config.adminList?.includes(session.userId)) {
+        return 'Permission denied. This command is for global admins only.'
+      }
       const result = await mailer.sendSummaryReport(24)
       return result
+    })
+
+  // 2. Add Word (Group Admin)
+  cmd.subcommand('.add <word:string>', 'Add a forbidden word to current group')
+    .action(async ({ session }, word) => {
+      if (!session) return
+      if (!checkPermission(session)) return 'Permission denied.'
+      if (!session.guildId) return 'This command must be used in a group.'
+      if (!word) return 'Please specify a word.'
+      
+      const groupConfig = config.groups.find(g => g.groupId === session.guildId)
+      if (!groupConfig) return 'This group is not configured for monitoring.'
+      
+      const success = await detector.addWord(session.guildId, word)
+      if (!success) return 'Word already exists.'
+      
+      return `Added "${word}" to local dictionary.`
+    })
+
+  // 3. Remove Word
+  cmd.subcommand('.remove <word:string>', 'Remove a forbidden word')
+    .action(async ({ session }, word) => {
+       if (!session) return
+       if (!checkPermission(session)) return 'Permission denied.'
+       if (!session.guildId) return 'This command must be used in a group.'
+       if (!word) return 'Please specify a word.'
+
+       const groupConfig = config.groups.find(g => g.groupId === session.guildId)
+       if (!groupConfig) return 'This group is not configured.'
+
+       const success = await detector.removeWord(session.guildId, word)
+       if (!success) return 'Word not found.'
+       
+       return `Removed "${word}".`
+    })
+
+  // 4. List Words
+  cmd.subcommand('.list', 'List forbidden words')
+    .action(async ({ session }, word) => { // Added 'word' param just to match signature if needed, but not used. Koishi actions don't strictly require unused params.
+       if (!session) return
+       if (!checkPermission(session)) return 'Permission denied.'
+       if (!session.guildId) return 'This command must be used in a group.'
+       
+       const groupConfig = config.groups.find(g => g.groupId === session.guildId)
+       if (!groupConfig) return 'Not configured.'
+       
+       const items = detector.getWords(session.guildId)
+       if (items.length === 0) return 'No forbidden words.'
+       return `Forbidden words (${items.length}):\n${items.map(i => i.word).join(', ')}`
+    })
+
+  // 5. Whitelist Add
+  cmd.subcommand('.whitelist.add <user:string>', 'Add user to whitelist')
+    .action(async ({ session }, user) => {
+       if (!session) return
+       if (!checkPermission(session)) return 'Permission denied.'
+       if (!session.guildId) return 'Group only.'
+       if (!user) return 'Specify user ID.'
+       
+       const groupConfig = config.groups.find(g => g.groupId === session.guildId)
+       if (!groupConfig) return 'Not configured.'
+       
+       if (groupConfig.whitelist.some(u => u.userId === user)) return 'Already whitelisted.'
+       groupConfig.whitelist.push({ userId: user })
+       try {
+        await ctx.scope.update(config)
+      } catch (e) { }
+       return `User ${user} added to whitelist.`
+    })
+
+  // 6. Whitelist Remove
+  cmd.subcommand('.whitelist.remove <user:string>', 'Remove user from whitelist')
+    .action(async ({ session }, user) => {
+       if (!session) return
+       if (!checkPermission(session)) return 'Permission denied.'
+       if (!session.guildId) return 'Group only.'
+       
+       const groupConfig = config.groups.find(g => g.groupId === session.guildId)
+       if (!groupConfig) return 'Not configured.'
+       
+       const idx = groupConfig.whitelist.findIndex(u => u.userId === user)
+       if (idx === -1) return 'Not in whitelist.'
+       groupConfig.whitelist.splice(idx, 1)
+       try {
+        await ctx.scope.update(config)
+      } catch (e) { }
+       return `User ${user} removed from whitelist.`
+    })
+
+  // 7. Stats
+  cmd.subcommand('.stats', 'View violation statistics')
+    .action(async ({ session }) => {
+       if (!session) return
+       if (!checkPermission(session)) return 'Permission denied.'
+       if (!session.guildId) return 'Group only.'
+       
+       const prefix = `${session.guildId}-`
+       let count = 0
+       let violators = 0
+       for (const [key, val] of userRecords.entries()) {
+         if (key.startsWith(prefix)) {
+           violators++
+           count += val.count
+         }
+       }
+       return `Current Monitoring Stats (Active Window):\nViolators: ${violators}`
+    })
+
+  // 8. Clean
+  cmd.subcommand('.clean <user:string>', 'Clean violation records for a user')
+    .action(async ({ session }, user) => {
+       if (!session) return
+       if (!checkPermission(session)) return 'Permission denied.'
+       if (!session.guildId) return 'Group only.'
+       if (!user) return 'Specify user ID.'
+       
+       const key = `${session.guildId}-${user}`
+       if (userRecords.delete(key)) {
+         return `Records cleared for user ${user}.`
+       }
+       return `No active records for user ${user}.`
+    })
+
+  // 9. Check
+  cmd.subcommand('.check <text:text>', 'Check if text contains forbidden words')
+    .action(async ({ session }, text) => {
+       if (!session) return
+       if (!checkPermission(session)) return 'Permission denied.'
+       if (!session.guildId) return 'Group only.'
+       if (!text) return 'Specify text.'
+       
+       const groupConfig = config.groups.find(g => g.groupId === session.guildId)
+       if (!groupConfig) return 'Not configured.'
+       
+       const res = await detector.check(text, session.guildId, groupConfig.detectionMethod)
+       if (res.detected) {
+         return `Detected: ${res.detectedWords?.join(', ')}`
+       }
+       return 'Safe.'
     })
 
   // --- Message Handler ---
@@ -104,6 +273,17 @@ export function apply(ctx: Context, config: Config) {
     
     if (!groupConfig.enable) {
       if (config.debug) logger.debug(`[DEBUG] Ignored: Monitoring disabled for group ${groupId}.`)
+      return
+    }
+
+    // --- Dynamic Admin Whitelist Check ---
+    // Automatically detect if user is admin or owner in OneBot (and other supported adapters)
+    // session.author.roles usually contains ['owner', 'admin', 'member']
+    const userRoles = session.author?.roles || []
+    if (userRoles.includes('admin') || userRoles.includes('owner')) {
+      if (config.debug) {
+        logger.debug(`[Group: ${groupId}] [User: ${userId}] Skipped: User is admin/owner (Dynamic Whitelist).`)
+      }
       return
     }
 

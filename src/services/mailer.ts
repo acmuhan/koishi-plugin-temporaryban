@@ -87,18 +87,42 @@ export class MailerService {
     if (!this.config.smtp.host || this.config.smtp.receivers.length === 0) return
 
     const transporter = this.createTransporter()
+    const html = `
+      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+        <h2 style="color: #d32f2f; border-bottom: 2px solid #d32f2f; padding-bottom: 10px; margin-top: 0;">⚠️ Violation Detected</h2>
+        
+        <div style="background-color: #fff5f5; padding: 15px; border-radius: 4px; margin-bottom: 20px; border-left: 4px solid #d32f2f;">
+          <p style="margin: 5px 0; color: #333;"><strong>Group ID:</strong> ${groupId}</p>
+          <p style="margin: 5px 0; color: #333;"><strong>User ID:</strong> ${userId}</p>
+          <p style="margin: 5px 0; color: #333;"><strong>Time:</strong> ${new Date().toLocaleString()}</p>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <h3 style="color: #444; font-size: 16px; margin-bottom: 10px;">Detected Words</h3>
+          <div style="background-color: #f0f0f0; padding: 10px; border-radius: 4px; color: #d32f2f; font-weight: bold;">
+            ${words.join(', ')}
+          </div>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <h3 style="color: #444; font-size: 16px; margin-bottom: 10px;">Original Content</h3>
+          <div style="background-color: #f9f9f9; padding: 10px; border-radius: 4px; color: #555; font-style: italic;">
+            "${content}"
+          </div>
+        </div>
+        
+        <div style="margin-top: 30px; font-size: 12px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 10px;">
+          Koishi Security System
+        </div>
+      </div>
+    `
+
     const mailOptions = {
       from: `"${this.config.smtp.senderName}" <${this.config.smtp.senderEmail}>`,
       to: this.config.smtp.receivers.join(','),
       subject: `[Koishi Security] Violation Detected in Group ${groupId}`,
       text: `User ${userId} triggered forbidden words in Group ${groupId}.\n\nDetected Words: ${words.join(', ')}\n\nTime: ${new Date().toLocaleString()}`,
-      html: `
-        <h2>Violation Detected</h2>
-        <p><strong>Group ID:</strong> ${groupId}</p>
-        <p><strong>User ID:</strong> ${userId}</p>
-        <p><strong>Time:</strong> ${new Date().toLocaleString()}</p>
-        <p><strong>Detected Words:</strong> ${words.join(', ')}</p>
-      `,
+      html: html
     }
 
     try {
@@ -128,33 +152,55 @@ export class MailerService {
     const transporter = this.createTransporter()
     
     // Generate HTML Table
-    const tableRows = targetRecords.map(r => `
-      <tr>
-        <td>${new Date(r.timestamp).toLocaleString()}</td>
-        <td>${r.groupId}</td>
-        <td>${r.userId}</td>
-        <td>${r.words.join(', ')}</td>
-        <td>${r.content}</td>
+    const tableRows = targetRecords.map((r, index) => `
+      <tr style="border-bottom: 1px solid #eee; background-color: ${index % 2 === 0 ? '#ffffff' : '#fcfcfc'};">
+        <td style="padding: 12px 8px; color: #666; font-size: 13px;">${new Date(r.timestamp).toLocaleString()}</td>
+        <td style="padding: 12px 8px; font-weight: 500;">${r.groupId}</td>
+        <td style="padding: 12px 8px;">${r.userId}</td>
+        <td style="padding: 12px 8px;"><span style="background-color: #ffebee; color: #c62828; padding: 2px 6px; border-radius: 4px; font-size: 12px;">${r.words.join(', ')}</span></td>
+        <td style="padding: 12px 8px; color: #444; max-width: 300px; word-break: break-all;">${r.content}</td>
       </tr>
     `).join('')
 
     const html = `
-      <h2>Violation Summary Report (Last ${hours} hours)</h2>
-      <p>Total Violations: ${targetRecords.length}</p>
-      <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse;">
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Group</th>
-            <th>User</th>
-            <th>Words</th>
-            <th>Content</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${tableRows}
-        </tbody>
-      </table>
+      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #1976d2; padding-bottom: 15px; margin-bottom: 20px;">
+          <h2 style="color: #1976d2; margin: 0;">🛡️ Violation Summary Report</h2>
+          <span style="background-color: #e3f2fd; color: #1976d2; padding: 5px 10px; border-radius: 15px; font-size: 14px; font-weight: bold;">Last ${hours} Hours</span>
+        </div>
+        
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 6px; margin-bottom: 25px; display: flex; gap: 20px;">
+          <div style="flex: 1;">
+            <p style="margin: 0; font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Total Violations</p>
+            <p style="margin: 5px 0 0; font-size: 24px; font-weight: bold; color: #333;">${targetRecords.length}</p>
+          </div>
+          <div style="flex: 1;">
+            <p style="margin: 0; font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Groups Affected</p>
+            <p style="margin: 5px 0 0; font-size: 24px; font-weight: bold; color: #333;">${new Set(targetRecords.map(r => r.groupId)).size}</p>
+          </div>
+        </div>
+        
+        <div style="overflow-x: auto;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 14px; text-align: left;">
+            <thead>
+              <tr style="background-color: #f8f9fa; color: #555;">
+                <th style="padding: 12px 8px; border-bottom: 2px solid #ddd; font-weight: 600;">Time</th>
+                <th style="padding: 12px 8px; border-bottom: 2px solid #ddd; font-weight: 600;">Group</th>
+                <th style="padding: 12px 8px; border-bottom: 2px solid #ddd; font-weight: 600;">User</th>
+                <th style="padding: 12px 8px; border-bottom: 2px solid #ddd; font-weight: 600;">Words</th>
+                <th style="padding: 12px 8px; border-bottom: 2px solid #ddd; font-weight: 600;">Content</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+        </div>
+        
+        <div style="margin-top: 30px; font-size: 12px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 15px;">
+          Generated by Koishi Temporary Ban Plugin • ${new Date().toLocaleString()}
+        </div>
+      </div>
     `
 
     const mailOptions = {
