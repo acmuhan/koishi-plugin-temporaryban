@@ -33,11 +33,25 @@ export default {
         no_history: '用户 {0} 没有最近的历史记录。',
         history_list: '用户 {0} 的最近历史记录:\n{1}',
         cleanup_info: '缓存清理主要由系统自动进行。',
-        group_info: '群组信息 ({0}):\n状态: {1}\n检测方式: {2}\n智能验证: {3}\n触发阈值: {4}次\n禁言时长: {5}分钟\n白名单人数: {6}'
+        group_info: '群组信息 ({0}):\n状态: {1}\n检测方式: {2}\n智能验证: {3}\n触发阈值: {4}次\n禁言时长: {5}分钟\n白名单人数: {6}',
+        violation_detail: '您触发了违禁词检测: {0}\n当前违规次数: {1}/{2}\n再违规 {3} 次将被禁言 {4} 分钟。',
+        ignored_word_added: '已添加 "{0}" 到本群忽略词列表。',
+        ignored_word_removed: '已从本群忽略词列表移除 "{0}"。',
+        no_ignored_words: '没有忽略词。',
+        ignored_words_list: '忽略词 ({0}):\n{1}'
       }
     },
     'temporaryban.info': {
       description: '查看当前群组的配置信息'
+    },
+    'temporaryban.whitelist.word.add': {
+      description: '添加本群忽略词'
+    },
+    'temporaryban.whitelist.word.remove': {
+      description: '移除本群忽略词'
+    },
+    'temporaryban.whitelist.word.list': {
+      description: '列出本群忽略词'
     },
     'temporaryban.report': {
       description: '手动触发违规报告（仅限全局管理员）'

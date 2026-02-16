@@ -33,11 +33,25 @@ export default {
         no_history: 'No recent history for user {0}.',
         history_list: 'Recent history for user {0}:\n{1}',
         cleanup_info: 'Cache cleanup is mainly handled automatically by the system.',
-        group_info: 'Group Info ({0}):\nStatus: {1}\nMethods: {2}\nSmart Verify: {3}\nThreshold: {4}\nMute: {5}min\nWhitelist: {6}'
+        group_info: 'Group Info ({0}):\nStatus: {1}\nMethods: {2}\nSmart Verify: {3}\nThreshold: {4}\nMute: {5}min\nWhitelist: {6}',
+        violation_detail: 'You triggered a forbidden word check: {0}\nCurrent violations: {1}/{2}\n{3} more violations will result in a {4} min mute.',
+        ignored_word_added: 'Added "{0}" to ignored words list.',
+        ignored_word_removed: 'Removed "{0}" from ignored words list.',
+        no_ignored_words: 'No ignored words.',
+        ignored_words_list: 'Ignored words ({0}):\n{1}'
       }
     },
     'temporaryban.info': {
       description: 'View current group configuration'
+    },
+    'temporaryban.whitelist.word.add': {
+      description: 'Add ignored word to group'
+    },
+    'temporaryban.whitelist.word.remove': {
+      description: 'Remove ignored word from group'
+    },
+    'temporaryban.whitelist.word.list': {
+      description: 'List ignored words in group'
     },
     'temporaryban.report': {
       description: 'Manually trigger violation report (Global Admin only)'

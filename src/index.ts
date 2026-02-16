@@ -14,11 +14,19 @@ export * from './config'
 export const name = 'koishi-plugin-temporaryban'
 export const inject = ['database']
 
+export interface IgnoredWordTable {
+  id: number
+  groupId: string
+  word: string
+  createdAt: Date
+}
+
 declare module 'koishi' {
   interface Tables {
     temporaryban_badwords: BadWordTable
     temporaryban_message_history: MessageHistoryTable
     temporaryban_whitelist: WhitelistTable
+    temporaryban_ignored_words: IgnoredWordTable
   }
 }
 
@@ -70,6 +78,15 @@ export function apply(ctx: Context, config: Config) {
     id: 'unsigned',
     groupId: 'string',
     userId: 'string',
+    createdAt: 'timestamp',
+  }, {
+    autoInc: true,
+  })
+
+  ctx.model.extend('temporaryban_ignored_words', {
+    id: 'unsigned',
+    groupId: 'string',
+    word: 'string',
     createdAt: 'timestamp',
   }, {
     autoInc: true,
@@ -279,26 +296,12 @@ export function apply(ctx: Context, config: Config) {
       }
     }
 
-    // 2. Send Censored Text (Modified format)
-    if (result.censoredText) {
-      try {
-        // Format: "您触发了违禁词检测:违禁词:(censored_text)"
-        const warningMsg = session.text('commands.temporaryban.messages.violation_detected', [result.censoredText])
-        await session.send(h.at(userId) + ' ' + warningMsg)
-      } catch (err) {
-        logger.error(`[Send Failed] Group: ${groupId}, Error: ${err}`)
-      }
-    }
-
-    // 3. Record Violation (Email Notification Logic Changed)
-    await mailer.recordViolation(userId, groupId, words, session.content!)
-
-    // 4. Track & Punish
+    // 2. Track & Punish Calculation
     const recordKey = `${groupId}-${userId}`
-    let record = userRecords.get(recordKey)
-    // Use effectiveConfig
+    const now = Date.now()
     const triggerWindow = (groupConfig.triggerWindowMinutes ?? 5) * Time.minute
-
+    
+    let record = userRecords.get(recordKey)
     if (!record) {
       record = { count: 1, firstTime: now }
       userRecords.set(recordKey, record)
@@ -312,10 +315,40 @@ export function apply(ctx: Context, config: Config) {
       }
     }
 
-    logger.info(`[COUNT] [Group: ${groupId}] [User: ${userId}] ${record.count}/${effectiveConfig.triggerThreshold}`)
+    const currentCount = record.count
+    const maxCount = effectiveConfig.triggerThreshold
+    const remaining = Math.max(0, maxCount - currentCount)
+    const muteMinutes = effectiveConfig.muteMinutes
 
-    if (record.count >= effectiveConfig.triggerThreshold) {
-      const muteSeconds = Math.floor(effectiveConfig.muteMinutes * 60)
+    logger.info(`[COUNT] [Group: ${groupId}] [User: ${userId}] ${currentCount}/${maxCount}`)
+
+    // 3. Send Warning
+    if (result.censoredText) {
+      try {
+        const showWord = groupConfig.showCensoredWord ?? config.defaultShowCensoredWord ?? true
+        const wordDisplay = showWord ? result.censoredText : '***'
+        
+        // Format: "You triggered a forbidden word check: {0}\nCurrent violations: {1}/{2}\n{3} more violations will result in a {4} min mute."
+        const warningMsg = session.text('commands.temporaryban.messages.violation_detail', [
+          wordDisplay, 
+          currentCount, 
+          maxCount, 
+          remaining, 
+          muteMinutes
+        ])
+        
+        await session.send(h.at(userId) + ' ' + warningMsg)
+      } catch (err) {
+        logger.error(`[Send Failed] Group: ${groupId}, Error: ${err}`)
+      }
+    }
+
+    // 4. Record Violation (Mail)
+    await mailer.recordViolation(userId, groupId, words, session.content!)
+
+    // 5. Mute Execution
+    if (currentCount >= maxCount) {
+      const muteSeconds = Math.floor(muteMinutes * 60)
       try {
         if (session.bot.muteGuildMember) {
            // Ensure parameters are correct: guildId, userId, milliseconds

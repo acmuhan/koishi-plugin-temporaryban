@@ -23,6 +23,7 @@ export class DetectorService {
   private config: Config
   private logger: Logger
   private localDictCache: Map<string, BadWordItem[]> = new Map()
+  private ignoredWordsCache: Map<string, Set<string>> = new Map() // groupId -> Set<word>
   private history: HistoryService
 
   constructor(ctx: Context, config: Config, history: HistoryService) {
@@ -80,7 +81,19 @@ export class DetectorService {
     }
     
     this.localDictCache = map
+    
+    // 3. Load Ignored Words
+    const allIgnored = await this.ctx.database.get('temporaryban_ignored_words', {})
+    this.ignoredWordsCache.clear()
+    for (const item of allIgnored) {
+      if (!this.ignoredWordsCache.has(item.groupId)) {
+        this.ignoredWordsCache.set(item.groupId, new Set())
+      }
+      this.ignoredWordsCache.get(item.groupId)?.add(item.word)
+    }
+
     this.logger.info(`Loaded bad words for ${map.size} groups from database.`)
+    this.logger.info(`Loaded ignored words for ${this.ignoredWordsCache.size} groups.`)
   }
 
   public async addWord(groupId: string, word: string): Promise<boolean> {
@@ -120,6 +133,45 @@ export class DetectorService {
 
   public getWords(groupId: string): BadWordItem[] {
     return this.localDictCache.get(groupId) || []
+  }
+
+  public async addIgnoredWord(groupId: string, word: string): Promise<boolean> {
+    const exists = await this.ctx.database.get('temporaryban_ignored_words', { groupId, word })
+    if (exists.length > 0) return false
+    
+    await this.ctx.database.create('temporaryban_ignored_words', {
+      groupId,
+      word,
+      createdAt: new Date()
+    })
+    
+    if (!this.ignoredWordsCache.has(groupId)) {
+      this.ignoredWordsCache.set(groupId, new Set())
+    }
+    this.ignoredWordsCache.get(groupId)?.add(word)
+    
+    return true
+  }
+
+  public async removeIgnoredWord(groupId: string, word: string): Promise<boolean> {
+    const result = await this.ctx.database.remove('temporaryban_ignored_words', { groupId, word })
+    if (result.matched === 0) return false
+    
+    if (this.ignoredWordsCache.has(groupId)) {
+      this.ignoredWordsCache.get(groupId)?.delete(word)
+    }
+    
+    return true
+  }
+
+  public getIgnoredWords(groupId: string): string[] {
+    return Array.from(this.ignoredWordsCache.get(groupId) || [])
+  }
+
+  public isIgnored(groupId: string, word: string): boolean {
+    const ignoredSet = this.ignoredWordsCache.get(groupId)
+    if (!ignoredSet || ignoredSet.size === 0) return false
+    return ignoredSet.has(word)
   }
 
   // Deprecated/Helper for migration only
@@ -254,12 +306,27 @@ export class DetectorService {
         
         if (aiRes.detected) {
           this.logger.info(`[Smart Verification] Confirmed violation.`)
-          return aiRes // Return AI result (usually more accurate/detailed)
+          initialDetection = aiRes // Update result with AI confirmation
         } else {
           this.logger.info(`[Smart Verification] False positive dismissed by AI.`)
           return { detected: false } // AI overrides as safe
         }
       }
+    }
+
+    // 3. Ignored Words Filter (Whitelist)
+    if (initialDetection.detected && initialDetection.detectedWords) {
+      const filteredWords = initialDetection.detectedWords.filter(w => !this.isIgnored(groupId, w))
+      
+      if (filteredWords.length === 0) {
+        if (this.config.debug && groupConfig.detailedLog) {
+          this.logger.debug(`[Check] Ignored: All detected words are in whitelist. (${initialDetection.detectedWords.join(', ')})`)
+        }
+        return { detected: false }
+      }
+      
+      // Update with filtered words
+      initialDetection.detectedWords = filteredWords
     }
 
     return initialDetection

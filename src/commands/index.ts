@@ -17,7 +17,7 @@ import { WhitelistService } from '../services/whitelist'
 export function registerCommands(ctx: Context, config: Config, detector: DetectorService, mailer: MailerService, userRecords: Map<string, UserRecord>, history: HistoryService, whitelistService: WhitelistService) {
   registerAdminCommands(ctx, config, mailer)
   registerDictionaryCommands(ctx, config, detector)
-  registerWhitelistCommands(ctx, config, whitelistService)
+  registerWhitelistCommands(ctx, config, whitelistService, detector)
   registerStatsCommands(ctx, config, userRecords)
   registerCheckCommands(ctx, config, detector)
   registerHistoryCommands(ctx, config, history)
