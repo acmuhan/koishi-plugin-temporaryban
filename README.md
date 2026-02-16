@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/koishi-plugin-temporaryban?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-temporaryban)
 [![npm downloads](https://img.shields.io/npm/dm/koishi-plugin-temporaryban?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-temporaryban)
 [![License](https://img.shields.io/npm/l/koishi-plugin-temporaryban?style=flat-square)](https://github.com/koishijs/koishi-plugin-temporaryban/blob/master/LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/koishijs/koishi-plugin-temporaryban?style=flat-square)](https://github.com/koishijs/koishi-plugin-temporaryban)
+[![GitHub stars](https://img.shields.io/github/stars/koishijs/koishi-plugin-temporaryban?style=flat-square)](https://github.com/acmuhan/koishi-plugin-temporaryban)
 
 **[中文文档](#中文) | [English Documentation](docs/README_en.md)**
 
