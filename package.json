@@ -1,6 +1,6 @@
 {
   "name": "koishi-plugin-temporaryban",
-  "version": "1.0.0",
+  "version": "1.0.2-beta.1",
   "description": "Koishi 违禁词检测与禁言插件，支持本地词库与在线API检测，违规邮件通知。",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
